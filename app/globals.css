@@ -82,14 +82,24 @@
 }
 
 @layer base {
-  * { @apply border-border outline-ring/50; }
-  html { @apply font-sans; background: var(--background); }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    background: var(--background);
+  }
   body {
     @apply bg-background text-foreground;
     min-width: 320px;
     -webkit-tap-highlight-color: transparent;
   }
-  button, input { touch-action: manipulation; }
+  button,
+  input {
+    touch-action: manipulation;
+  }
 }
 
-::selection { background: color-mix(in oklch, var(--primary) 22%, transparent); }
+::selection {
+  background: color-mix(in oklch, var(--primary) 22%, transparent);
+}

@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: '立直计分｜日本麻将计分工具',
-  description: '适配手机屏幕的日本立直麻将计分板，快速记录荣和、自摸、流局与点数修正。',
+  title: '在线立直计分｜日本麻将房间记分工具',
+  description:
+    '免密用户名登录，创建四人房间并在线记录日本立直麻将每局分数、个人战绩与排行榜。',
   openGraph: {
     title: '立直计分｜日本麻将计分工具',
     description: '手机端日本立直麻将计分与赛事 pt 结算工具',
