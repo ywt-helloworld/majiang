@@ -529,15 +529,23 @@ function ScorePanel({
   const [loserId, setLoserId] = useState(game.players[1]?.userId || '');
   const [han, setHan] = useState(3);
   const [fu, setFu] = useState(30);
-  const [repeatDealer, setRepeatDealer] = useState(
-    game.players[0]?.seat === game.dealerIndex,
+  const [entryMode, setEntryMode] = useState<'calculate' | 'manual'>(
+    'calculate',
   );
+  const [manualRon, setManualRon] = useState('');
+  const [manualChild, setManualChild] = useState('');
+  const [manualDealer, setManualDealer] = useState('');
   const [tenpaiIds, setTenpaiIds] = useState<string[]>([]);
   const [adjustId, setAdjustId] = useState(game.players[0]?.userId || '');
   const [adjustPoints, setAdjustPoints] = useState('');
   const winner =
     game.players.find((player) => player.userId === winnerId) ||
     game.players[0];
+  const dealer = game.players.find(
+    (player) => player.seat === game.dealerIndex,
+  );
+  const dealerWin = winner?.seat === game.dealerIndex;
+  const drawRepeats = Boolean(dealer && tenpaiIds.includes(dealer.userId));
   const effectiveFu = han >= 5 ? 30 : fu;
   const points = useMemo(
     () =>
@@ -558,10 +566,6 @@ function ScorePanel({
       setLoserId(
         game.players.find((player) => player.userId !== userId)?.userId || '',
       );
-    setRepeatDealer(
-      game.players.find((player) => player.userId === userId)?.seat ===
-        game.dealerIndex,
-    );
   }
 
   function recordHand() {
@@ -573,7 +577,8 @@ function ScorePanel({
         loserId,
         han,
         fu: effectiveFu,
-        repeatDealer,
+        repeatDealer: dealerWin,
+        ...(entryMode === 'manual' ? { manualPoints: Number(manualRon) } : {}),
       };
     else if (mode === 'tsumo')
       gameAction = {
@@ -581,10 +586,22 @@ function ScorePanel({
         winnerId,
         han,
         fu: effectiveFu,
-        repeatDealer,
+        repeatDealer: dealerWin,
+        ...(entryMode === 'manual'
+          ? {
+              manualChildPoints: Number(manualChild),
+              manualDealerPoints: dealerWin
+                ? Number(manualChild)
+                : Number(manualDealer),
+            }
+          : {}),
       };
     else if (mode === 'draw')
-      gameAction = { type: 'draw', tenpaiIds, repeatDealer };
+      gameAction = {
+        type: 'draw',
+        tenpaiIds,
+        repeatDealer: drawRepeats,
+      };
     else
       gameAction = {
         type: 'adjust',
@@ -598,19 +615,40 @@ function ScorePanel({
       gameAction,
     });
   }
+  const validManualPoint = (value: string) =>
+    Number(value) > 0 && Number(value) % 100 === 0;
+  const manualScoreValid =
+    mode === 'ron'
+      ? validManualPoint(manualRon)
+      : validManualPoint(manualChild) &&
+        (dealerWin || validManualPoint(manualDealer));
   const canSubmit =
     mode === 'adjust'
       ? Number(adjustPoints) !== 0
       : mode === 'draw'
         ? true
         : Boolean(winnerId) &&
-          !invalid &&
+          (entryMode === 'manual' ? manualScoreValid : !invalid) &&
           (mode !== 'ron' || winnerId !== loserId);
-  const preview = points.limit || `${points.fu}符 ${points.han}番`;
-  const pay =
-    winner?.seat === game.dealerIndex
-      ? `${formatScore(points.tsumoDealer)} all`
-      : `${formatScore(points.tsumoChild)} / ${formatScore(points.tsumoDealer)}`;
+  const baseRon = entryMode === 'manual' ? Number(manualRon) : points.ron;
+  const baseChild =
+    entryMode === 'manual'
+      ? Number(manualChild)
+      : dealerWin
+        ? points.tsumoDealer
+        : points.tsumoChild;
+  const baseDealer =
+    entryMode === 'manual' ? Number(manualDealer) : points.tsumoDealer;
+  const preview =
+    entryMode === 'manual'
+      ? '手动输入'
+      : points.limit || `${points.fu}符 ${points.han}番`;
+  const ronPayment = baseRon + game.honba * 300;
+  const childPayment = baseChild + game.honba * 100;
+  const dealerPayment = baseDealer + game.honba * 100;
+  const pay = dealerWin
+    ? `${formatScore(childPayment)} all`
+    : `${formatScore(childPayment)} / ${formatScore(dealerPayment)}`;
 
   return (
     <div className="mt-4 rounded-3xl border bg-card p-4">
@@ -672,56 +710,126 @@ function ScorePanel({
               </label>
             )}
           </div>
-          <div>
-            <p className="mb-2 text-[11px] text-muted-foreground">番数</p>
-            <div className="grid grid-cols-7 gap-1.5">
-              {HAN.map((value) => (
-                <button
-                  key={value}
-                  onClick={() => setHan(value)}
-                  className={`h-9 rounded-lg border text-xs font-semibold ${han === value ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
-                >
-                  {value === 13 ? '役满' : value}
-                </button>
-              ))}
-            </div>
+          <div className="grid grid-cols-2 rounded-xl bg-muted p-1">
+            {(
+              [
+                ['calculate', '按符番计算'],
+                ['manual', '直接输入点数'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setEntryMode(value)}
+                className={`h-9 rounded-lg text-xs font-medium transition ${entryMode === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <div>
-            <p className="mb-2 text-[11px] text-muted-foreground">
-              符数 {han >= 5 && <span>· 满贯以上无需计符</span>}
-            </p>
-            <div className="grid grid-cols-7 gap-1.5">
-              {FU.map((value) => (
-                <button
-                  key={value}
-                  disabled={han >= 5}
-                  onClick={() => setFu(value)}
-                  className={`h-9 rounded-lg border text-xs font-semibold disabled:opacity-35 ${fu === value ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
+          {entryMode === 'calculate' ? (
+            <>
+              <div>
+                <p className="mb-2 text-[11px] text-muted-foreground">番数</p>
+                <div className="grid grid-cols-7 gap-1.5">
+                  {HAN.map((value) => (
+                    <button
+                      key={value}
+                      onClick={() => setHan(value)}
+                      className={`h-9 rounded-lg border text-xs font-semibold ${han === value ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
+                    >
+                      {value === 13 ? '役满' : value}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  符数 {han >= 5 && <span>· 满贯以上无需计符</span>}
+                </p>
+                <div className="grid grid-cols-7 gap-1.5">
+                  {FU.map((value) => (
+                    <button
+                      key={value}
+                      disabled={han >= 5}
+                      onClick={() => setFu(value)}
+                      className={`h-9 rounded-lg border text-xs font-semibold disabled:opacity-35 ${fu === value ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : mode === 'ron' ? (
+            <label
+              htmlFor="manual-ron"
+              className="text-[11px] text-muted-foreground"
+            >
+              放铳支付点数（不含本场棒）
+              <Input
+                id="manual-ron"
+                inputMode="numeric"
+                value={manualRon}
+                onChange={(event) => setManualRon(event.target.value)}
+                placeholder="例如 7700"
+                className="mt-1.5 h-11 rounded-xl text-base"
+              />
+            </label>
+          ) : (
+            <div className={`grid gap-2 ${dealerWin ? '' : 'grid-cols-2'}`}>
+              <label
+                htmlFor="manual-child"
+                className="text-[11px] text-muted-foreground"
+              >
+                {dealerWin ? '每家支付点数' : '闲家支付点数'}（不含本场棒）
+                <Input
+                  id="manual-child"
+                  inputMode="numeric"
+                  value={manualChild}
+                  onChange={(event) => setManualChild(event.target.value)}
+                  placeholder={dealerWin ? '例如 2600' : '例如 1300'}
+                  className="mt-1.5 h-11 rounded-xl text-base"
+                />
+              </label>
+              {!dealerWin && (
+                <label
+                  htmlFor="manual-dealer"
+                  className="text-[11px] text-muted-foreground"
                 >
-                  {value}
-                </button>
-              ))}
+                  庄家支付点数（不含本场棒）
+                  <Input
+                    id="manual-dealer"
+                    inputMode="numeric"
+                    value={manualDealer}
+                    onChange={(event) => setManualDealer(event.target.value)}
+                    placeholder="例如 2600"
+                    className="mt-1.5 h-11 rounded-xl text-base"
+                  />
+                </label>
+              )}
             </div>
-          </div>
-          {invalid ? (
+          )}
+          {(entryMode === 'calculate' && invalid) ||
+          (entryMode === 'manual' && !manualScoreValid) ? (
             <p className="text-xs text-destructive">
-              当前符番组合不成立，请调整符数。
+              {entryMode === 'manual'
+                ? '请输入大于 0 的整百点。'
+                : '当前符番组合不成立，请调整符数。'}
             </p>
           ) : (
-            <div className="flex items-center justify-between rounded-2xl bg-success-soft px-4 py-3">
+            <div className="rounded-2xl bg-success-soft px-4 py-3">
               <div>
                 <p className="text-[10px] text-muted-foreground">{preview}</p>
                 <p className="mt-0.5 text-lg font-semibold text-primary">
-                  {mode === 'ron' ? formatScore(points.ron) : pay}
+                  {mode === 'ron' ? formatScore(ronPayment) : pay}
                 </p>
               </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span>连庄</span>
-                <Switch
-                  checked={repeatDealer}
-                  onCheckedChange={setRepeatDealer}
-                />
-              </div>
+              <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">
+                {game.honba} 本场已自动加算
+                {game.sticks ? ` · ${game.sticks} 根立直棒归和牌者` : ''}
+                {' · '}
+                {dealerWin ? '庄家和牌，自动连庄' : '闲家和牌，自动轮庄'}
+              </p>
             </div>
           )}
         </div>
@@ -752,9 +860,11 @@ function ScorePanel({
               );
             })}
           </div>
-          <div className="mt-4 flex items-center justify-end gap-2 text-xs">
-            <span>庄家听牌／连庄</span>
-            <Switch checked={repeatDealer} onCheckedChange={setRepeatDealer} />
+          <div className="mt-4 rounded-xl bg-muted px-3 py-2.5 text-xs text-muted-foreground">
+            流局后本场数自动 +1 ·{' '}
+            <span className="font-medium text-foreground">
+              {drawRepeats ? '庄家听牌，自动连庄' : '庄家未听，自动轮庄'}
+            </span>
           </div>
         </div>
       )}

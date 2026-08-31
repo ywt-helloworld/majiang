@@ -47,16 +47,19 @@ export type GameAction =
       loserId: string;
       han: number;
       fu: number;
-      repeatDealer: boolean;
+      repeatDealer?: boolean;
+      manualPoints?: number;
     }
   | {
       type: 'tsumo';
       winnerId: string;
       han: number;
       fu: number;
-      repeatDealer: boolean;
+      repeatDealer?: boolean;
+      manualChildPoints?: number;
+      manualDealerPoints?: number;
     }
-  | { type: 'draw'; tenpaiIds: string[]; repeatDealer: boolean }
+  | { type: 'draw'; tenpaiIds: string[]; repeatDealer?: boolean }
   | { type: 'adjust'; userId: string; points: number }
   | {
       type: 'ruling';
@@ -96,6 +99,12 @@ export function createGame(
 
 function roundUp100(value: number) {
   return Math.ceil(value / 100) * 100;
+}
+
+function validateManualPayment(value: number | undefined) {
+  if (!Number.isFinite(value) || !value || value <= 0 || value % 100 !== 0)
+    throw new Error('手动点数需为大于 0 的整百点');
+  return Math.trunc(value);
 }
 
 export function calculateHandPoints({
@@ -258,15 +267,19 @@ export function applyGameAction(
       fu: action.fu,
       dealer,
     });
-    const payment = points.ron + game.honba * 300;
+    const basePayment =
+      action.manualPoints === undefined
+        ? points.ron
+        : validateManualPayment(action.manualPoints);
+    const payment = basePayment + game.honba * 300;
     winner.score += payment + game.sticks * 1000;
     loser.score -= payment;
     game.sticks = 0;
-    finishHand(game, action.repeatDealer);
+    finishHand(game, dealer);
     commit(
       game,
       before,
-      `${winner.name} 荣和 · ${points.limit || `${points.fu}符${points.han}番`} · ${formatScore(points.ron)}`,
+      `${winner.name} 荣和 · ${action.manualPoints === undefined ? points.limit || `${points.fu}符${points.han}番` : '手动输入'} · ${formatScore(basePayment)}`,
     );
     return game;
   }
@@ -281,28 +294,39 @@ export function applyGameAction(
       fu: action.fu,
       dealer,
     });
+    const manual = action.manualChildPoints !== undefined;
+    const childBase = manual
+      ? validateManualPayment(action.manualChildPoints)
+      : dealer
+        ? points.tsumoDealer
+        : points.tsumoChild;
+    const dealerBase = manual
+      ? dealer
+        ? childBase
+        : validateManualPayment(action.manualDealerPoints)
+      : points.tsumoDealer;
     let received = game.sticks * 1000;
     for (const other of game.players) {
       if (other.userId === winner.userId) continue;
       const base = dealer
-        ? points.tsumoDealer
+        ? childBase
         : other.seat === game.dealerIndex
-          ? points.tsumoDealer
-          : points.tsumoChild;
+          ? dealerBase
+          : childBase;
       const payment = base + game.honba * 100;
       other.score -= payment;
       received += payment;
     }
     winner.score += received;
     game.sticks = 0;
-    finishHand(game, action.repeatDealer);
+    finishHand(game, dealer);
     const share = dealer
-      ? `${formatScore(points.tsumoDealer)} all`
-      : `${formatScore(points.tsumoChild)} / ${formatScore(points.tsumoDealer)}`;
+      ? `${formatScore(childBase)} all`
+      : `${formatScore(childBase)} / ${formatScore(dealerBase)}`;
     commit(
       game,
       before,
-      `${winner.name} 自摸 · ${points.limit || `${points.fu}符${points.han}番`} · ${share}`,
+      `${winner.name} 自摸 · ${manual ? '手动输入' : points.limit || `${points.fu}符${points.han}番`} · ${share}`,
     );
     return game;
   }
@@ -315,7 +339,8 @@ export function applyGameAction(
       for (const item of game.players)
         item.score += ready.includes(item.userId) ? receive : -pay;
     }
-    finishHand(game, action.repeatDealer, true);
+    const dealer = game.players.find((item) => item.seat === game.dealerIndex);
+    finishHand(game, Boolean(dealer && ready.includes(dealer.userId)), true);
     commit(
       game,
       before,
