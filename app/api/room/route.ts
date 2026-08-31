@@ -212,6 +212,32 @@ export async function POST(request: Request) {
     return respondRoom(db, roomId, user);
   }
 
+  if (action === 'kick') {
+    if (room.hostUserId !== user.id)
+      return json({ error: '只有房主可以移出玩家' }, 403);
+    if (room.status !== 'waiting')
+      return json({ error: '只能在对局开始前移出玩家' }, 409);
+    const targetUserId =
+      typeof body?.targetUserId === 'string' ? body.targetUserId : '';
+    if (!targetUserId || targetUserId === user.id)
+      return json({ error: '不能移出房主自己' }, 400);
+    if (!room.members.some((member) => member.userId === targetUserId))
+      return json({ error: '该玩家已经不在房间中' }, 404);
+    await db.batch([
+      db
+        .prepare(
+          'UPDATE room_members SET active = 0, ready = 0 WHERE room_id = ? AND user_id = ?',
+        )
+        .bind(roomId, targetUserId),
+      db
+        .prepare(
+          'UPDATE rooms SET updated_at = ?, version = version + 1 WHERE id = ?',
+        )
+        .bind(now, roomId),
+    ]);
+    return respondRoom(db, roomId, user);
+  }
+
   if (action === 'start') {
     if (room.hostUserId !== user.id)
       return json({ error: '只有房主可以开始' }, 403);

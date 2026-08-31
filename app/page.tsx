@@ -17,6 +17,7 @@ import {
   RotateCcw,
   Spade,
   Trophy,
+  UserMinus,
   UserRound,
   Users,
 } from 'lucide-react';
@@ -65,6 +66,7 @@ type LeaderboardRow = {
   games: number;
   totalPt: number;
   avgPt: number;
+  avgRank: number;
   firsts: number;
 };
 type Bootstrap = {
@@ -75,6 +77,7 @@ type Bootstrap = {
 };
 type ScoreMode = 'ron' | 'tsumo' | 'draw' | 'adjust';
 type Tab = 'match' | 'history' | 'ranking';
+type RankingMode = 'total' | 'average' | 'place';
 
 const FU = [20, 25, 30, 40, 50, 60, 70];
 const HAN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
@@ -198,23 +201,6 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
             账户名是公开昵称，不设密码，请勿用它保存敏感信息。
           </p>
         </section>
-        <div className="grid grid-cols-3 gap-2">
-          {[
-            { icon: DoorOpen, label: '加入房间' },
-            { icon: History, label: '历史战绩' },
-            { icon: BarChart3, label: '战绩排行' },
-          ].map((item) => (
-            <div
-              key={item.label}
-              className="rounded-2xl border bg-card px-2 py-4 text-center"
-            >
-              <item.icon className="mx-auto size-4 text-primary" />
-              <p className="mt-2 text-[11px] font-medium text-muted-foreground">
-                {item.label}
-              </p>
-            </div>
-          ))}
-        </div>
       </div>
     </Shell>
   );
@@ -384,6 +370,25 @@ function WaitingRoom({
                         ? '你'
                         : '玩家'}
                   </p>
+                  {room.hostUserId === room.meId &&
+                    member.userId !== room.meId && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="mt-2"
+                        disabled={busy}
+                        onClick={() =>
+                          act({
+                            action: 'kick',
+                            roomId: room.id,
+                            targetUserId: member.userId,
+                          })
+                        }
+                      >
+                        <UserMinus />
+                        移出
+                      </Button>
+                    )}
                 </>
               ) : (
                 <div className="mt-5 flex items-center gap-2 text-sm text-muted-foreground">
@@ -1048,36 +1053,81 @@ function HistoryView({ rows }: { rows: HistoryRow[] }) {
 }
 
 function RankingView({ rows }: { rows: LeaderboardRow[] }) {
+  const [mode, setMode] = useState<RankingMode>('total');
+  const sorted = useMemo(
+    () =>
+      [...rows].sort((a, b) => {
+        if (mode === 'average')
+          return b.avgPt - a.avgPt || b.totalPt - a.totalPt;
+        if (mode === 'place')
+          return (
+            a.avgRank - b.avgRank || b.games - a.games || b.totalPt - a.totalPt
+          );
+        return b.totalPt - a.totalPt || b.avgPt - a.avgPt;
+      }),
+    [mode, rows],
+  );
+  const description =
+    mode === 'total'
+      ? '按累计 pt 从高到低排名'
+      : mode === 'average'
+        ? '按每场平均 pt 从高到低排名'
+        : '按平均顺位从低到高排名';
   return (
     <section>
       <h1 className="text-2xl font-semibold">战绩排行</h1>
-      <p className="mt-1 text-xs text-muted-foreground">按累计 pt 排名</p>
+      <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      <div className="mt-4 grid grid-cols-3 rounded-xl bg-muted p-1">
+        {(
+          [
+            ['total', '累计 pt'],
+            ['average', '平均 pt'],
+            ['place', '平均顺位'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setMode(value)}
+            className={`h-9 rounded-lg text-xs font-medium transition ${mode === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       {rows.length ? (
         <div className="mt-5 overflow-hidden rounded-3xl border bg-card">
-          {rows.map((row, index) => (
-            <div
-              key={row.id}
-              className="flex items-center border-b p-4 last:border-0"
-            >
-              <span
-                className={`grid size-9 place-items-center rounded-xl text-sm font-semibold ${index < 3 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+          {sorted.map((row, index) => {
+            const metric = mode === 'average' ? row.avgPt : row.totalPt;
+            return (
+              <div
+                key={row.id}
+                className="flex items-center border-b p-4 last:border-0"
               >
-                {index + 1}
-              </span>
-              <div className="ml-3 min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{row.username}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground">
-                  {row.games} 场 · {row.firsts} 次一位 · 场均{' '}
-                  {signed(row.avgPt)}
+                <span
+                  className={`grid size-9 place-items-center rounded-xl text-sm font-semibold ${index < 3 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+                >
+                  {index + 1}
+                </span>
+                <div className="ml-3 min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    {row.username}
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    {mode === 'total'
+                      ? `${row.games} 场 · 场均 ${signed(row.avgPt)} · 平均顺位 ${row.avgRank.toFixed(2)}`
+                      : mode === 'average'
+                        ? `${row.games} 场 · 累计 ${signed(row.totalPt)} · 平均顺位 ${row.avgRank.toFixed(2)}`
+                        : `${row.games} 场 · ${row.firsts} 次一位 · 场均 ${signed(row.avgPt)}`}
+                  </p>
+                </div>
+                <p
+                  className={`font-mono font-semibold ${mode === 'place' ? 'text-primary' : metric >= 0 ? 'text-primary' : 'text-destructive'}`}
+                >
+                  {mode === 'place' ? row.avgRank.toFixed(2) : signed(metric)}
                 </p>
               </div>
-              <p
-                className={`font-mono font-semibold ${row.totalPt >= 0 ? 'text-primary' : 'text-destructive'}`}
-              >
-                {signed(row.totalPt)}
-              </p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <Empty
@@ -1184,10 +1234,19 @@ export default function Home() {
     const roomId = room?.id;
     if (!roomId) return;
     const timer = window.setInterval(() => {
-      loadRoom(roomId).catch(() => undefined);
+      loadRoom(roomId).catch((caught) => {
+        if (
+          caught instanceof Error &&
+          caught.message.includes('房间不存在或你已离开')
+        ) {
+          setRoom(null);
+          setError('你已被房主移出房间');
+          void bootstrap();
+        }
+      });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [room?.id, loadRoom]);
+  }, [room?.id, loadRoom, bootstrap]);
 
   async function act(action: Record<string, unknown>) {
     setBusy(true);

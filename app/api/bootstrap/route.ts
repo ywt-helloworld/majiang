@@ -36,6 +36,7 @@ export async function GET(request: Request) {
       `SELECT u.id, u.username, COUNT(*) AS games,
             ROUND(SUM(mr.total_pt), 1) AS totalPt,
             ROUND(AVG(mr.total_pt), 1) AS avgPt,
+            ROUND(AVG((50.0 - mr.uma) / 20.0), 2) AS avgRank,
             SUM(CASE WHEN mr.rank = 1 THEN 1 ELSE 0 END) AS firsts
      FROM match_results mr
      JOIN users u ON u.id = mr.user_id
