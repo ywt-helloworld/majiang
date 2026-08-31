@@ -25,6 +25,35 @@ type MemberRow = {
   ready: number;
 };
 
+type SeatMode = 'auto' | 'manual';
+
+function parseStoredRoomState(room: RoomRow) {
+  if (!room.gameState) return { gameState: null, seatMode: 'auto' as SeatMode };
+  const stored = JSON.parse(room.gameState) as
+    | GameState
+    | { seatMode?: SeatMode };
+  if (room.status === 'waiting')
+    return {
+      gameState: null,
+      seatMode:
+        'seatMode' in stored && stored.seatMode === 'manual'
+          ? 'manual'
+          : 'auto',
+    };
+  return { gameState: stored as GameState, seatMode: 'auto' as SeatMode };
+}
+
+function shuffleMembers(members: MemberRow[]) {
+  const shuffled = [...members];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    const other = random[0] % (index + 1);
+    [shuffled[index], shuffled[other]] = [shuffled[other], shuffled[index]];
+  }
+  return shuffled;
+}
+
 async function getRoom(db: D1Database, roomId: string, userId: string) {
   const membership = await db
     .prepare(
@@ -42,6 +71,7 @@ async function getRoom(db: D1Database, roomId: string, userId: string) {
     .bind(roomId)
     .first<RoomRow>();
   if (!room) return null;
+  const storedState = parseStoredRoomState(room);
   const members = await db
     .prepare(
       `SELECT rm.user_id AS userId, u.username, rm.seat, rm.ready
@@ -52,9 +82,7 @@ async function getRoom(db: D1Database, roomId: string, userId: string) {
     .all<MemberRow>();
   return {
     ...room,
-    gameState: room.gameState
-      ? (JSON.parse(room.gameState) as GameState)
-      : null,
+    ...storedState,
     members: members.results,
     meId: userId,
   };
@@ -159,6 +187,12 @@ export async function POST(request: Request) {
     if (members.results.length >= 4) return json({ error: '房间已满' }, 409);
     const occupied = new Set(members.results.map((item) => item.seat));
     const seat = [0, 1, 2, 3].find((item) => !occupied.has(item)) ?? 3;
+    await db
+      .prepare(
+        'DELETE FROM room_members WHERE room_id = ? AND active = 0 AND seat = ? AND user_id != ?',
+      )
+      .bind(room.id, seat, user.id)
+      .run();
     const previous = await db
       .prepare(
         'SELECT user_id AS userId FROM room_members WHERE room_id = ? AND user_id = ?',
@@ -212,6 +246,88 @@ export async function POST(request: Request) {
     return respondRoom(db, roomId, user);
   }
 
+  if (action === 'seat-mode') {
+    if (room.hostUserId !== user.id)
+      return json({ error: '只有房主可以选择定风方式' }, 403);
+    if (room.status !== 'waiting') return json({ error: '对局已经开始' }, 409);
+    if (body?.seatMode !== 'auto' && body?.seatMode !== 'manual')
+      return json({ error: '请选择有效定风方式' }, 400);
+    const seatMode: SeatMode = body.seatMode;
+    await db.batch([
+      db
+        .prepare(
+          'UPDATE room_members SET ready = 0 WHERE room_id = ? AND active = 1',
+        )
+        .bind(roomId),
+      db
+        .prepare(
+          'UPDATE rooms SET game_state = ?, updated_at = ?, version = version + 1 WHERE id = ?',
+        )
+        .bind(JSON.stringify({ seatMode }), now, roomId),
+    ]);
+    return respondRoom(db, roomId, user);
+  }
+
+  if (action === 'choose-seat') {
+    if (room.status !== 'waiting') return json({ error: '对局已经开始' }, 409);
+    if (room.seatMode !== 'manual')
+      return json({ error: '当前由系统自动定风' }, 409);
+    const targetSeat = Number(body?.seat);
+    if (!Number.isInteger(targetSeat) || targetSeat < 0 || targetSeat > 3)
+      return json({ error: '请选择有效风位' }, 400);
+    const member = room.members.find((item) => item.userId === user.id);
+    if (!member) return json({ error: '你不在该房间中' }, 404);
+    if (member.seat === targetSeat) return respondRoom(db, roomId, user);
+    const occupant = room.members.find((item) => item.seat === targetSeat);
+    const statements = [];
+    if (occupant) {
+      const joined = await db
+        .prepare(
+          'SELECT joined_at AS joinedAt FROM room_members WHERE room_id = ? AND user_id = ?',
+        )
+        .bind(roomId, occupant.userId)
+        .first<{ joinedAt: number }>();
+      if (!joined) return json({ error: '座位刚刚发生变化，请重试' }, 409);
+      statements.push(
+        db
+          .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
+          .bind(roomId, occupant.userId),
+        db
+          .prepare(
+            'UPDATE room_members SET seat = ?, ready = 0 WHERE room_id = ? AND user_id = ?',
+          )
+          .bind(targetSeat, roomId, user.id),
+        db
+          .prepare(
+            'INSERT INTO room_members (room_id, user_id, seat, ready, active, joined_at) VALUES (?, ?, ?, 0, 1, ?)',
+          )
+          .bind(roomId, occupant.userId, member.seat, joined.joinedAt),
+      );
+    } else {
+      statements.push(
+        db
+          .prepare(
+            'DELETE FROM room_members WHERE room_id = ? AND active = 0 AND seat = ?',
+          )
+          .bind(roomId, targetSeat),
+        db
+          .prepare(
+            'UPDATE room_members SET seat = ?, ready = 0 WHERE room_id = ? AND user_id = ?',
+          )
+          .bind(targetSeat, roomId, user.id),
+      );
+    }
+    statements.push(
+      db
+        .prepare(
+          'UPDATE rooms SET updated_at = ?, version = version + 1 WHERE id = ?',
+        )
+        .bind(now, roomId),
+    );
+    await db.batch(statements);
+    return respondRoom(db, roomId, user);
+  }
+
   if (action === 'kick') {
     if (room.hostUserId !== user.id)
       return json({ error: '只有房主可以移出玩家' }, 403);
@@ -225,9 +341,7 @@ export async function POST(request: Request) {
       return json({ error: '该玩家已经不在房间中' }, 404);
     await db.batch([
       db
-        .prepare(
-          'UPDATE room_members SET active = 0, ready = 0 WHERE room_id = ? AND user_id = ?',
-        )
+        .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
         .bind(roomId, targetUserId),
       db
         .prepare(
@@ -248,8 +362,15 @@ export async function POST(request: Request) {
     )
       return json({ error: '需要四位玩家全部准备' }, 409);
     const matchId = crypto.randomUUID();
+    const seatedMembers =
+      room.seatMode === 'auto'
+        ? shuffleMembers(room.members).map((member, seat) => ({
+            ...member,
+            seat,
+          }))
+        : room.members;
     const game = createGame(
-      room.members.map((member) => ({
+      seatedMembers.map((member) => ({
         userId: member.userId,
         name: member.username,
         seat: member.seat,
@@ -341,9 +462,7 @@ export async function POST(request: Request) {
     const others = room.members.filter((member) => member.userId !== user.id);
     const statements = [
       db
-        .prepare(
-          'UPDATE room_members SET active = 0, ready = 0 WHERE room_id = ? AND user_id = ?',
-        )
+        .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
         .bind(roomId, user.id),
     ];
     if (room.hostUserId === user.id && others.length)

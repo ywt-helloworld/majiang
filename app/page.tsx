@@ -49,6 +49,7 @@ type Room = {
   meId: string;
   members: RoomMember[];
   gameState: GameState | null;
+  seatMode: 'auto' | 'manual';
 };
 type HistoryRow = {
   matchId: string;
@@ -340,6 +341,84 @@ function WaitingRoom({
           {copied ? '已复制' : '复制'}
         </Button>
       </div>
+      <div className="mt-4 rounded-3xl border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="font-semibold">开局定风</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {room.seatMode === 'auto'
+                ? '开始时由系统随机分配东、南、西、北。'
+                : '每位玩家点选风位；已有玩家时，两家互换。'}
+            </p>
+          </div>
+          {room.hostUserId !== room.meId && (
+            <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+              房主设置
+            </span>
+          )}
+        </div>
+        <div className="mt-3 grid grid-cols-2 rounded-xl bg-muted p-1">
+          {(
+            [
+              ['auto', '自动定风'],
+              ['manual', '玩家选风'],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              disabled={busy || room.hostUserId !== room.meId}
+              onClick={() =>
+                act({
+                  action: 'seat-mode',
+                  roomId: room.id,
+                  seatMode: value,
+                })
+              }
+              className={`h-9 rounded-lg text-xs font-medium transition disabled:cursor-default ${room.seatMode === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {room.seatMode === 'manual' && (
+          <>
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              {[0, 1, 2, 3].map((seat) => {
+                const occupant = room.members.find(
+                  (member) => member.seat === seat,
+                );
+                const selected = me?.seat === seat;
+                return (
+                  <button
+                    key={seat}
+                    disabled={busy || !me}
+                    onClick={() =>
+                      act({
+                        action: 'choose-seat',
+                        roomId: room.id,
+                        seat,
+                      })
+                    }
+                    className={`min-w-0 rounded-xl border px-1.5 py-2.5 text-center transition ${selected ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
+                  >
+                    <span className="block text-sm font-semibold">
+                      {WINDS[seat]}
+                    </span>
+                    <span
+                      className={`mt-1 block truncate text-[9px] ${selected ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}
+                    >
+                      {occupant?.username || '空位'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+              调整风位的玩家需要重新确认准备。
+            </p>
+          </>
+        )}
+      </div>
       <div className="mt-4 grid grid-cols-2 gap-2">
         {[0, 1, 2, 3].map((seat) => {
           const member = room.members.find((item) => item.seat === seat);
@@ -350,7 +429,9 @@ function WaitingRoom({
             >
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted-foreground">
-                  {WINDS[seat]}家
+                  {room.seatMode === 'manual'
+                    ? `${WINDS[seat]}家`
+                    : `玩家 ${seat + 1}`}
                 </span>
                 {member?.ready && (
                   <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
