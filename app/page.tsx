@@ -15,7 +15,9 @@ import {
   Play,
   Plus,
   RotateCcw,
+  ShieldCheck,
   Spade,
+  Trash2,
   Trophy,
   UserMinus,
   UserRound,
@@ -23,6 +25,17 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -33,7 +46,7 @@ import {
   type GameState,
 } from '@/lib/game';
 
-type User = { id: string; username: string };
+type User = { id: string; username: string; isAdmin: boolean };
 type RoomMember = {
   userId: string;
   username: string;
@@ -49,7 +62,8 @@ type Room = {
   meId: string;
   members: RoomMember[];
   gameState: GameState | null;
-  seatMode: 'auto' | 'manual';
+  dealerMode: 'system' | 'host';
+  dealerUserId: string | null;
 };
 type HistoryRow = {
   matchId: string;
@@ -76,8 +90,29 @@ type Bootstrap = {
   history: HistoryRow[];
   leaderboard: LeaderboardRow[];
 };
+type AdminUserRow = {
+  id: string;
+  username: string;
+  createdAt: number;
+  lastSeenAt: number;
+  games: number;
+  inActiveRoom: boolean;
+  isAdmin: boolean;
+};
+type AdminMatchRow = {
+  matchId: string;
+  roomCode: string;
+  startedAt: number;
+  finishedAt: number;
+  playerCount: number;
+  playerNames: string;
+};
+type AdminOverview = {
+  users: AdminUserRow[];
+  matches: AdminMatchRow[];
+};
 type ScoreMode = 'ron' | 'tsumo' | 'draw' | 'adjust';
-type Tab = 'match' | 'history' | 'ranking';
+type Tab = 'match' | 'history' | 'ranking' | 'admin';
 type RankingMode = 'total' | 'average' | 'place';
 
 const FU = [20, 25, 30, 40, 50, 60, 70];
@@ -132,6 +167,8 @@ function Brand() {
 
 function Login({ onLogin }: { onLogin: (user: User) => void }) {
   const [username, setUsername] = useState('');
+  const [adminMode, setAdminMode] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -142,7 +179,11 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
       const data = await api<{ user: User }>('/api/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
+        body: JSON.stringify({
+          username,
+          adminLogin: adminMode,
+          ...(adminMode ? { adminPassword } : {}),
+        }),
       });
       onLogin(data.user);
     } catch (caught) {
@@ -160,12 +201,14 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
             WELCOME
           </p>
           <h1 className="mt-3 text-[32px] font-semibold leading-[1.18] tracking-tight">
-            输入名字，
+            {adminMode ? '管理者登录，' : '输入名字，'}
             <br />
-            一起开始记分。
+            {adminMode ? '维护比赛记录。' : '一起开始记分。'}
           </h1>
           <p className="mt-4 max-w-sm text-sm leading-6 text-muted-foreground">
-            无需密码。四人进入同一房间并准备后，即可共同记录荣和、自摸、流局与判罚。
+            {adminMode
+              ? '管理者可撤销错误战绩、删除账号，并查看必要的管理状态。'
+              : '无需密码。四人进入同一房间并准备后，即可共同记录荣和、自摸、流局与判罚。'}
           </p>
           <form className="mt-8 space-y-3" onSubmit={submit}>
             <label
@@ -180,9 +223,26 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
               maxLength={12}
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              placeholder="输入 1–12 个字符"
+              placeholder={adminMode ? '输入管理员账号' : '输入 1–12 个字符'}
               className="h-12 rounded-2xl bg-card px-4 text-base shadow-sm"
             />
+            {adminMode && (
+              <label
+                htmlFor="admin-password"
+                className="block text-xs font-medium text-muted-foreground"
+              >
+                管理密码
+                <Input
+                  id="admin-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={adminPassword}
+                  onChange={(event) => setAdminPassword(event.target.value)}
+                  placeholder="输入管理密码"
+                  className="mt-2 h-12 rounded-2xl bg-card px-4 text-base shadow-sm"
+                />
+              </label>
+            )}
             {error && (
               <p className="flex items-center gap-1.5 text-xs text-destructive">
                 <CircleAlert className="size-3.5" />
@@ -192,15 +252,31 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
             <Button
               type="submit"
               className="h-12 w-full rounded-2xl text-[15px] font-semibold"
-              disabled={!username.trim() || busy}
+              disabled={
+                !username.trim() || (adminMode && !adminPassword) || busy
+              }
             >
-              {busy && <LoaderCircle className="animate-spin" />}进入计分大厅{' '}
+              {busy && <LoaderCircle className="animate-spin" />}
+              {adminMode ? '进入管理后台' : '进入计分大厅'}{' '}
               <ChevronRight data-icon="inline-end" />
             </Button>
           </form>
           <p className="mt-3 text-center text-[11px] leading-5 text-muted-foreground">
-            账户名是公开昵称，不设密码，请勿用它保存敏感信息。
+            {adminMode
+              ? '管理密码仅用于管理入口，请勿转发给其他玩家。'
+              : '账户名是公开昵称，不设密码，请勿用它保存敏感信息。'}
           </p>
+          <button
+            type="button"
+            className="mx-auto mt-3 block text-xs text-primary underline-offset-4 hover:underline"
+            onClick={() => {
+              setAdminMode((current) => !current);
+              setError('');
+              setAdminPassword('');
+            }}
+          >
+            {adminMode ? '返回普通玩家登录' : '管理者入口'}
+          </button>
         </section>
       </div>
     </Shell>
@@ -218,6 +294,7 @@ function AppHeader({ user, logout }: { user: User; logout: () => void }) {
       >
         <UserRound />
         {user.username}
+        {user.isAdmin && <ShieldCheck className="text-primary" />}
         <LogOut />
       </Button>
     </header>
@@ -318,6 +395,11 @@ function WaitingRoom({
   const me = room.members.find((member) => member.userId === room.meId);
   const allReady =
     room.members.length === 4 && room.members.every((member) => member.ready);
+  const selectedDealer = room.members.find(
+    (member) => member.userId === room.dealerUserId,
+  );
+  const canStart =
+    allReady && (room.dealerMode === 'system' || Boolean(selectedDealer));
   const [copied, setCopied] = useState(false);
   async function copy() {
     await navigator.clipboard.writeText(room.code);
@@ -344,11 +426,11 @@ function WaitingRoom({
       <div className="mt-4 rounded-3xl border bg-card p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="font-semibold">开局定风</p>
+            <p className="font-semibold">开局定庄与座次</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              {room.seatMode === 'auto'
-                ? '开始时由系统随机分配东、南、西、北。'
-                : '每位玩家点选风位；已有玩家时，两家互换。'}
+              {room.dealerMode === 'system'
+                ? '系统随机分配东、南、西、北；抽到东家的玩家坐庄。'
+                : '房主指定东家与庄家，其余三家随机分配南、西、北。'}
             </p>
           </div>
           {room.hostUserId !== room.meId && (
@@ -360,8 +442,8 @@ function WaitingRoom({
         <div className="mt-3 grid grid-cols-2 rounded-xl bg-muted p-1">
           {(
             [
-              ['auto', '自动定风'],
-              ['manual', '玩家选风'],
+              ['system', '系统定庄'],
+              ['host', '房主定庄'],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -369,52 +451,52 @@ function WaitingRoom({
               disabled={busy || room.hostUserId !== room.meId}
               onClick={() =>
                 act({
-                  action: 'seat-mode',
+                  action: 'dealer-mode',
                   roomId: room.id,
-                  seatMode: value,
+                  dealerMode: value,
                 })
               }
-              className={`h-9 rounded-lg text-xs font-medium transition disabled:cursor-default ${room.seatMode === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+              className={`h-9 rounded-lg text-xs font-medium transition disabled:cursor-default ${room.dealerMode === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
             >
               {label}
             </button>
           ))}
         </div>
-        {room.seatMode === 'manual' && (
+        {room.dealerMode === 'host' && (
           <>
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              {[0, 1, 2, 3].map((seat) => {
-                const occupant = room.members.find(
-                  (member) => member.seat === seat,
-                );
-                const selected = me?.seat === seat;
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              选择本场东家／庄家
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {room.members.map((member) => {
+                const selected = member.userId === room.dealerUserId;
                 return (
                   <button
-                    key={seat}
-                    disabled={busy || !me}
+                    key={member.userId}
+                    disabled={busy || room.hostUserId !== room.meId}
                     onClick={() =>
                       act({
-                        action: 'choose-seat',
+                        action: 'choose-dealer',
                         roomId: room.id,
-                        seat,
+                        dealerUserId: member.userId,
                       })
                     }
-                    className={`min-w-0 rounded-xl border px-1.5 py-2.5 text-center transition ${selected ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
+                    className={`min-w-0 rounded-xl border px-3 py-2.5 text-left transition disabled:cursor-default ${selected ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
                   >
-                    <span className="block text-sm font-semibold">
-                      {WINDS[seat]}
+                    <span className="block truncate text-xs font-semibold">
+                      {member.username}
                     </span>
                     <span
-                      className={`mt-1 block truncate text-[9px] ${selected ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}
+                      className={`mt-1 block text-[9px] ${selected ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}
                     >
-                      {occupant?.username || '空位'}
+                      {selected ? '东家 · 庄家' : '待选择'}
                     </span>
                   </button>
                 );
               })}
             </div>
             <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
-              调整风位的玩家需要重新确认准备。
+              指定或更换庄家后，全员需要重新确认准备。
             </p>
           </>
         )}
@@ -429,9 +511,7 @@ function WaitingRoom({
             >
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted-foreground">
-                  {room.seatMode === 'manual'
-                    ? `${WINDS[seat]}家`
-                    : `玩家 ${seat + 1}`}
+                  玩家 {seat + 1}
                 </span>
                 {member?.ready && (
                   <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-primary-foreground">
@@ -445,11 +525,13 @@ function WaitingRoom({
                     {member.username}
                   </p>
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    {member.userId === room.hostUserId
-                      ? '房主'
-                      : member.userId === room.meId
-                        ? '你'
-                        : '玩家'}
+                    {member.userId === room.dealerUserId
+                      ? '预定东家 · 庄家'
+                      : member.userId === room.hostUserId
+                        ? '房主'
+                        : member.userId === room.meId
+                          ? '你'
+                          : '玩家'}
                   </p>
                   {room.hostUserId === room.meId &&
                     member.userId !== room.meId && (
@@ -503,11 +585,15 @@ function WaitingRoom({
         {room.hostUserId === room.meId && (
           <Button
             className="mt-5 h-11 w-full rounded-2xl"
-            disabled={!allReady || busy}
+            disabled={!canStart || busy}
             onClick={() => act({ action: 'start', roomId: room.id })}
           >
             <Play />
-            {allReady ? '开始记分' : '等待四家准备'}
+            {!allReady
+              ? '等待四家准备'
+              : room.dealerMode === 'host' && !selectedDealer
+                ? '请先指定东家'
+                : '开始记分'}
           </Button>
         )}
         {room.hostUserId !== room.meId && (
@@ -1331,6 +1417,224 @@ function RankingView({ rows }: { rows: LeaderboardRow[] }) {
   );
 }
 
+function AdminConfirm({
+  trigger,
+  title,
+  description,
+  busy,
+  onConfirm,
+}: {
+  trigger: string;
+  title: string;
+  description: string;
+  busy: boolean;
+  onConfirm: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <AlertDialogTrigger
+        render={<Button size="sm" variant="destructive" disabled={busy} />}
+      >
+        <Trash2 />
+        {trigger}
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>暂不操作</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              void onConfirm();
+            }}
+          >
+            确认删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function AdminView() {
+  const [section, setSection] = useState<'matches' | 'users'>('matches');
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setOverview(await api<AdminOverview>('/api/admin'));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '管理数据加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  async function mutate(payload: Record<string, unknown>) {
+    setBusy(true);
+    setError('');
+    try {
+      const next = await api<AdminOverview>('/api/admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setOverview(next);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '管理操作失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">管理后台</h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            管理战绩记录与玩家账号
+          </p>
+        </div>
+        <Button size="sm" variant="outline" disabled={loading} onClick={load}>
+          <RotateCcw className={loading ? 'animate-spin' : ''} />
+          刷新
+        </Button>
+      </div>
+      <div className="mt-4 rounded-2xl bg-primary/10 px-4 py-3 text-xs leading-5 text-primary">
+        撤销战绩会同时从四家的历史与排行榜移除。删除账号后无法继续登录，已有战绩会匿名保留。
+      </div>
+      <div className="mt-4 grid grid-cols-2 rounded-xl bg-muted p-1">
+        {(
+          [
+            ['matches', '对局记录'],
+            ['users', '账号管理'],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setSection(value)}
+            className={`h-9 rounded-lg text-xs font-medium transition ${section === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {error && <Notice text={error} />}
+      {loading ? (
+        <div className="grid min-h-48 place-items-center text-muted-foreground">
+          <LoaderCircle className="size-5 animate-spin" />
+        </div>
+      ) : section === 'matches' ? (
+        overview?.matches.length ? (
+          <div className="mt-4 space-y-2">
+            {overview.matches.map((match) => (
+              <div
+                key={match.matchId}
+                className="rounded-2xl border bg-card p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold">
+                      房间 {match.roomCode}
+                    </p>
+                    <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                      {match.playerNames}
+                    </p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      {new Date(match.finishedAt).toLocaleString('zh-CN')} ·{' '}
+                      {match.playerCount} 家
+                    </p>
+                  </div>
+                  <AdminConfirm
+                    trigger="撤销"
+                    title={`撤销房间 ${match.roomCode} 的战绩？`}
+                    description="这会删除整场对局的四家成绩，并立即影响历史战绩和所有排行榜，操作无法撤回。"
+                    busy={busy}
+                    onConfirm={() =>
+                      mutate({
+                        action: 'delete-match',
+                        matchId: match.matchId,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Empty
+            icon={History}
+            title="没有可管理的战绩"
+            text="正式结束的半庄会显示在这里。"
+          />
+        )
+      ) : overview?.users.length ? (
+        <div className="mt-4 space-y-2">
+          {overview.users.map((account) => (
+            <div key={account.id} className="rounded-2xl border bg-card p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+                    {account.username}
+                    {account.isAdmin && (
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] text-primary">
+                        管理员
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {account.games} 场战绩 · 最近登录{' '}
+                    {new Date(account.lastSeenAt).toLocaleDateString('zh-CN')}
+                  </p>
+                  {account.inActiveRoom && (
+                    <p className="mt-1 text-[10px] text-destructive">
+                      当前正在房间或对局中
+                    </p>
+                  )}
+                </div>
+                {!account.isAdmin && (
+                  <AdminConfirm
+                    trigger="删除"
+                    title={`删除账号“${account.username}”？`}
+                    description="该账号会立即退出登录且无法恢复；原有战绩将改为匿名显示。正在房间或对局中的账号不能删除。"
+                    busy={busy || account.inActiveRoom}
+                    onConfirm={() =>
+                      mutate({ action: 'delete-user', userId: account.id })
+                    }
+                  />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Empty
+          icon={Users}
+          title="没有玩家账号"
+          text="玩家首次登录后会显示在这里。"
+        />
+      )}
+    </section>
+  );
+}
+
 function Empty({
   icon: Icon,
   title,
@@ -1355,21 +1659,29 @@ function BottomNav({
   tab,
   setTab,
   disabled,
+  isAdmin,
 }: {
   tab: Tab;
   setTab: (tab: Tab) => void;
   disabled: boolean;
+  isAdmin: boolean;
 }) {
+  const items: Array<{
+    value: Tab;
+    label: string;
+    icon: typeof History;
+  }> = [
+    { value: 'match', label: '对局', icon: DoorOpen },
+    { value: 'history', label: '战绩', icon: History },
+    { value: 'ranking', label: '排行', icon: BarChart3 },
+  ];
+  if (isAdmin) items.push({ value: 'admin', label: '管理', icon: ShieldCheck });
   return (
     <nav className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-      <div className="mx-auto grid h-16 max-w-[560px] grid-cols-3 px-4">
-        {(
-          [
-            { value: 'match', label: '对局', icon: DoorOpen },
-            { value: 'history', label: '战绩', icon: History },
-            { value: 'ranking', label: '排行', icon: BarChart3 },
-          ] as const
-        ).map((item) => (
+      <div
+        className={`mx-auto grid h-16 max-w-[560px] px-4 ${isAdmin ? 'grid-cols-4' : 'grid-cols-3'}`}
+      >
+        {items.map((item) => (
           <button
             key={item.value}
             disabled={disabled && item.value !== 'match'}
@@ -1504,7 +1816,13 @@ export default function Home() {
         ))}
       {tab === 'history' && <HistoryView rows={history} />}
       {tab === 'ranking' && <RankingView rows={leaderboard} />}
-      <BottomNav tab={tab} setTab={setTab} disabled={Boolean(locked)} />
+      {tab === 'admin' && user.isAdmin && <AdminView />}
+      <BottomNav
+        tab={tab}
+        setTab={setTab}
+        disabled={Boolean(locked)}
+        isAdmin={user.isAdmin}
+      />
     </Shell>
   );
 }

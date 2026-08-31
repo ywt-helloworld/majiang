@@ -25,22 +25,39 @@ type MemberRow = {
   ready: number;
 };
 
-type SeatMode = 'auto' | 'manual';
+type DealerMode = 'system' | 'host';
 
 function parseStoredRoomState(room: RoomRow) {
-  if (!room.gameState) return { gameState: null, seatMode: 'auto' as SeatMode };
+  if (!room.gameState)
+    return {
+      gameState: null,
+      dealerMode: 'system' as DealerMode,
+      dealerUserId: null as string | null,
+    };
   const stored = JSON.parse(room.gameState) as
     | GameState
-    | { seatMode?: SeatMode };
+    | {
+        dealerMode?: DealerMode;
+        dealerUserId?: string | null;
+        seatMode?: string;
+      };
   if (room.status === 'waiting')
     return {
       gameState: null,
-      seatMode:
-        'seatMode' in stored && stored.seatMode === 'manual'
-          ? 'manual'
-          : 'auto',
+      dealerMode:
+        'dealerMode' in stored && stored.dealerMode === 'host'
+          ? 'host'
+          : 'system',
+      dealerUserId:
+        'dealerUserId' in stored && typeof stored.dealerUserId === 'string'
+          ? stored.dealerUserId
+          : null,
     };
-  return { gameState: stored as GameState, seatMode: 'auto' as SeatMode };
+  return {
+    gameState: stored as GameState,
+    dealerMode: 'system' as DealerMode,
+    dealerUserId: null as string | null,
+  };
 }
 
 function shuffleMembers(members: MemberRow[]) {
@@ -246,13 +263,13 @@ export async function POST(request: Request) {
     return respondRoom(db, roomId, user);
   }
 
-  if (action === 'seat-mode') {
+  if (action === 'dealer-mode') {
     if (room.hostUserId !== user.id)
-      return json({ error: '只有房主可以选择定风方式' }, 403);
+      return json({ error: '只有房主可以选择定庄方式' }, 403);
     if (room.status !== 'waiting') return json({ error: '对局已经开始' }, 409);
-    if (body?.seatMode !== 'auto' && body?.seatMode !== 'manual')
-      return json({ error: '请选择有效定风方式' }, 400);
-    const seatMode: SeatMode = body.seatMode;
+    if (body?.dealerMode !== 'system' && body?.dealerMode !== 'host')
+      return json({ error: '请选择有效定庄方式' }, 400);
+    const dealerMode: DealerMode = body.dealerMode;
     await db.batch([
       db
         .prepare(
@@ -263,68 +280,37 @@ export async function POST(request: Request) {
         .prepare(
           'UPDATE rooms SET game_state = ?, updated_at = ?, version = version + 1 WHERE id = ?',
         )
-        .bind(JSON.stringify({ seatMode }), now, roomId),
+        .bind(JSON.stringify({ dealerMode, dealerUserId: null }), now, roomId),
     ]);
     return respondRoom(db, roomId, user);
   }
 
-  if (action === 'choose-seat') {
+  if (action === 'choose-dealer') {
+    if (room.hostUserId !== user.id)
+      return json({ error: '只有房主可以指定庄家' }, 403);
     if (room.status !== 'waiting') return json({ error: '对局已经开始' }, 409);
-    if (room.seatMode !== 'manual')
-      return json({ error: '当前由系统自动定风' }, 409);
-    const targetSeat = Number(body?.seat);
-    if (!Number.isInteger(targetSeat) || targetSeat < 0 || targetSeat > 3)
-      return json({ error: '请选择有效风位' }, 400);
-    const member = room.members.find((item) => item.userId === user.id);
-    if (!member) return json({ error: '你不在该房间中' }, 404);
-    if (member.seat === targetSeat) return respondRoom(db, roomId, user);
-    const occupant = room.members.find((item) => item.seat === targetSeat);
-    const statements = [];
-    if (occupant) {
-      const joined = await db
-        .prepare(
-          'SELECT joined_at AS joinedAt FROM room_members WHERE room_id = ? AND user_id = ?',
-        )
-        .bind(roomId, occupant.userId)
-        .first<{ joinedAt: number }>();
-      if (!joined) return json({ error: '座位刚刚发生变化，请重试' }, 409);
-      statements.push(
-        db
-          .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
-          .bind(roomId, occupant.userId),
-        db
-          .prepare(
-            'UPDATE room_members SET seat = ?, ready = 0 WHERE room_id = ? AND user_id = ?',
-          )
-          .bind(targetSeat, roomId, user.id),
-        db
-          .prepare(
-            'INSERT INTO room_members (room_id, user_id, seat, ready, active, joined_at) VALUES (?, ?, ?, 0, 1, ?)',
-          )
-          .bind(roomId, occupant.userId, member.seat, joined.joinedAt),
-      );
-    } else {
-      statements.push(
-        db
-          .prepare(
-            'DELETE FROM room_members WHERE room_id = ? AND active = 0 AND seat = ?',
-          )
-          .bind(roomId, targetSeat),
-        db
-          .prepare(
-            'UPDATE room_members SET seat = ?, ready = 0 WHERE room_id = ? AND user_id = ?',
-          )
-          .bind(targetSeat, roomId, user.id),
-      );
-    }
-    statements.push(
+    if (room.dealerMode !== 'host')
+      return json({ error: '当前由系统自动定庄' }, 409);
+    const dealerUserId =
+      typeof body?.dealerUserId === 'string' ? body.dealerUserId : '';
+    if (!room.members.some((member) => member.userId === dealerUserId))
+      return json({ error: '请选择房间内的玩家作为庄家' }, 400);
+    await db.batch([
       db
         .prepare(
-          'UPDATE rooms SET updated_at = ?, version = version + 1 WHERE id = ?',
+          'UPDATE room_members SET ready = 0 WHERE room_id = ? AND active = 1',
         )
-        .bind(now, roomId),
-    );
-    await db.batch(statements);
+        .bind(roomId),
+      db
+        .prepare(
+          'UPDATE rooms SET game_state = ?, updated_at = ?, version = version + 1 WHERE id = ?',
+        )
+        .bind(
+          JSON.stringify({ dealerMode: 'host', dealerUserId }),
+          now,
+          roomId,
+        ),
+    ]);
     return respondRoom(db, roomId, user);
   }
 
@@ -339,15 +325,22 @@ export async function POST(request: Request) {
       return json({ error: '不能移出房主自己' }, 400);
     if (!room.members.some((member) => member.userId === targetUserId))
       return json({ error: '该玩家已经不在房间中' }, 404);
+    const waitingState =
+      room.dealerMode === 'host' && room.dealerUserId === targetUserId
+        ? JSON.stringify({ dealerMode: 'host', dealerUserId: null })
+        : JSON.stringify({
+            dealerMode: room.dealerMode,
+            dealerUserId: room.dealerUserId,
+          });
     await db.batch([
       db
         .prepare('DELETE FROM room_members WHERE room_id = ? AND user_id = ?')
         .bind(roomId, targetUserId),
       db
         .prepare(
-          'UPDATE rooms SET updated_at = ?, version = version + 1 WHERE id = ?',
+          'UPDATE rooms SET game_state = ?, updated_at = ?, version = version + 1 WHERE id = ?',
         )
-        .bind(now, roomId),
+        .bind(waitingState, now, roomId),
     ]);
     return respondRoom(db, roomId, user);
   }
@@ -361,14 +354,26 @@ export async function POST(request: Request) {
       room.members.some((member) => !member.ready)
     )
       return json({ error: '需要四位玩家全部准备' }, 409);
+    const selectedDealer = room.members.find(
+      (member) => member.userId === room.dealerUserId,
+    );
+    if (room.dealerMode === 'host' && !selectedDealer)
+      return json({ error: '请先指定一位玩家作为东家和庄家' }, 409);
     const matchId = crypto.randomUUID();
     const seatedMembers =
-      room.seatMode === 'auto'
+      room.dealerMode === 'system'
         ? shuffleMembers(room.members).map((member, seat) => ({
             ...member,
             seat,
           }))
-        : room.members;
+        : [
+            selectedDealer!,
+            ...shuffleMembers(
+              room.members.filter(
+                (member) => member.userId !== selectedDealer!.userId,
+              ),
+            ),
+          ].map((member, seat) => ({ ...member, seat }));
     const game = createGame(
       seatedMembers.map((member) => ({
         userId: member.userId,
