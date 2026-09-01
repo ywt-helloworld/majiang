@@ -40,6 +40,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
   calculateHandPoints,
+  calculateStandings,
   formatScore,
   roundLabel,
   type GameAction,
@@ -110,6 +111,12 @@ type AdminMatchRow = {
 type AdminOverview = {
   users: AdminUserRow[];
   matches: AdminMatchRow[];
+  created?: boolean;
+};
+type DirectResultPlayer = {
+  username: string;
+  score: string;
+  penalty: string;
 };
 type ScoreMode = 'ron' | 'tsumo' | 'draw' | 'adjust';
 type Tab = 'match' | 'history' | 'ranking' | 'admin';
@@ -1428,7 +1435,7 @@ function AdminConfirm({
   title: string;
   description: string;
   busy: boolean;
-  onConfirm: () => Promise<void>;
+  onConfirm: () => Promise<unknown>;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1462,16 +1469,207 @@ function AdminConfirm({
   );
 }
 
+function DirectResultForm({
+  busy,
+  onCreate,
+}: {
+  busy: boolean;
+  onCreate: (players: DirectResultPlayer[]) => Promise<boolean>;
+}) {
+  const initialPlayers = (): DirectResultPlayer[] =>
+    WINDS.map(() => ({ username: '', score: '25000', penalty: '0' }));
+  const [players, setPlayers] = useState<DirectResultPlayer[]>(initialPlayers);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const scores = players.map((player) => Number(player.score));
+  const penalties = players.map((player) => Number(player.penalty || 0));
+  const total = scores.reduce((sum, score) => sum + (score || 0), 0);
+  const names = players.map((player) => player.username.trim().toLowerCase());
+  const valid =
+    names.every(Boolean) &&
+    new Set(names).size === 4 &&
+    scores.every((score) => Number.isInteger(score) && score % 100 === 0) &&
+    total === 100000 &&
+    penalties.every(
+      (penalty) =>
+        Number.isFinite(penalty) &&
+        penalty <= 0 &&
+        Math.round(penalty * 10) === penalty * 10,
+    );
+  const preview = calculateStandings(
+    players.map((player, seat) => ({
+      userId: String(seat),
+      name: player.username.trim() || `${WINDS[seat]}家`,
+      seat,
+      score: scores[seat] || 0,
+      penalty: penalties[seat] || 0,
+    })),
+  );
+
+  function updatePlayer(
+    seat: number,
+    field: keyof DirectResultPlayer,
+    value: string,
+  ) {
+    setPlayers((current) =>
+      current.map((player, index) =>
+        index === seat ? { ...player, [field]: value } : player,
+      ),
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="rounded-2xl border bg-card p-4">
+        <p className="text-sm font-semibold">直接生成对战结局</p>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+          按座次填写四个现有账号。系统会自动计算顺位、位次分和最终 pt。
+        </p>
+      </div>
+      {players.map((player, seat) => (
+        <div key={WINDS[seat]} className="rounded-2xl border bg-card p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">{WINDS[seat]}家</p>
+            {seat === 0 && (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9px] text-primary">
+                庄家
+              </span>
+            )}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label
+              htmlFor={`result-user-${seat}`}
+              className="text-[10px] text-muted-foreground"
+            >
+              玩家账号
+              <Input
+                id={`result-user-${seat}`}
+                value={player.username}
+                maxLength={12}
+                onChange={(event) =>
+                  updatePlayer(seat, 'username', event.target.value)
+                }
+                placeholder="现有账号"
+                className="mt-1.5 h-10 rounded-xl text-sm"
+              />
+            </label>
+            <label
+              htmlFor={`result-score-${seat}`}
+              className="text-[10px] text-muted-foreground"
+            >
+              最终点数
+              <Input
+                id={`result-score-${seat}`}
+                inputMode="numeric"
+                value={player.score}
+                onChange={(event) =>
+                  updatePlayer(seat, 'score', event.target.value)
+                }
+                className="mt-1.5 h-10 rounded-xl font-mono text-sm"
+              />
+            </label>
+          </div>
+          <label
+            htmlFor={`result-penalty-${seat}`}
+            className="mt-2 block text-[10px] text-muted-foreground"
+          >
+            额外判罚 pt（没有则填 0，仅允许负数）
+            <Input
+              id={`result-penalty-${seat}`}
+              inputMode="decimal"
+              value={player.penalty}
+              onChange={(event) =>
+                updatePlayer(seat, 'penalty', event.target.value)
+              }
+              className="mt-1.5 h-10 rounded-xl font-mono text-sm"
+            />
+          </label>
+        </div>
+      ))}
+      <div className="rounded-2xl border bg-card p-4">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">四家点数合计</span>
+          <span
+            className={`font-mono font-semibold ${total === 100000 ? 'text-primary' : 'text-destructive'}`}
+          >
+            {formatScore(total)} / 100,000
+          </span>
+        </div>
+        <div className="mt-3 space-y-1.5 border-t pt-3">
+          {preview.map((standing) => (
+            <div
+              key={standing.userId}
+              className="flex items-center justify-between text-[11px]"
+            >
+              <span className="min-w-0 truncate text-muted-foreground">
+                {standing.place} 位 · {standing.name}
+              </span>
+              <span
+                className={`font-mono font-semibold ${standing.totalPoints >= 0 ? 'text-primary' : 'text-destructive'}`}
+              >
+                {signed(standing.totalPoints)} pt
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogTrigger
+          render={
+            <Button
+              className="h-11 w-full rounded-2xl"
+              disabled={busy || !valid}
+            />
+          }
+        >
+          <Plus />
+          生成并计入战绩
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认生成这场对战结局？</AlertDialogTitle>
+            <AlertDialogDescription>
+              结果会立即写入四家历史战绩和排行榜。如有错误，可稍后在“对局记录”中撤销整场。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>返回检查</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={busy}
+              onClick={() => {
+                setConfirmOpen(false);
+                void onCreate(players).then((created) => {
+                  if (created) setPlayers(initialPlayers());
+                });
+              }}
+            >
+              确认生成
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {!valid && (
+        <p className="text-center text-[10px] leading-4 text-muted-foreground">
+          请填写四个不同账号，点数使用整百点且合计为 100,000。
+        </p>
+      )}
+    </div>
+  );
+}
+
 function AdminView() {
-  const [section, setSection] = useState<'matches' | 'users'>('matches');
+  const [section, setSection] = useState<'create' | 'matches' | 'users'>(
+    'create',
+  );
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    setSuccess('');
     try {
       setOverview(await api<AdminOverview>('/api/admin'));
     } catch (caught) {
@@ -1489,6 +1687,7 @@ function AdminView() {
   async function mutate(payload: Record<string, unknown>) {
     setBusy(true);
     setError('');
+    setSuccess('');
     try {
       const next = await api<AdminOverview>('/api/admin', {
         method: 'POST',
@@ -1496,8 +1695,12 @@ function AdminView() {
         body: JSON.stringify(payload),
       });
       setOverview(next);
+      if (payload.action === 'create-result')
+        setSuccess('赛果已生成，并已计入四家历史战绩和排行榜。');
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '管理操作失败');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1518,11 +1721,12 @@ function AdminView() {
         </Button>
       </div>
       <div className="mt-4 rounded-2xl bg-primary/10 px-4 py-3 text-xs leading-5 text-primary">
-        撤销战绩会同时从四家的历史与排行榜移除。删除账号后无法继续登录，已有战绩会匿名保留。
+        可直接补录四家最终赛果；撤销战绩会同步影响历史与排行榜。删除账号后已有战绩会匿名保留。
       </div>
-      <div className="mt-4 grid grid-cols-2 rounded-xl bg-muted p-1">
+      <div className="mt-4 grid grid-cols-3 rounded-xl bg-muted p-1">
         {(
           [
+            ['create', '补录赛果'],
             ['matches', '对局记录'],
             ['users', '账号管理'],
           ] as const
@@ -1537,10 +1741,29 @@ function AdminView() {
         ))}
       </div>
       {error && <Notice text={error} />}
+      {success && (
+        <div className="mt-4 rounded-2xl bg-primary/10 px-4 py-3 text-xs leading-5 text-primary">
+          {success}
+        </div>
+      )}
       {loading ? (
         <div className="grid min-h-48 place-items-center text-muted-foreground">
           <LoaderCircle className="size-5 animate-spin" />
         </div>
+      ) : section === 'create' ? (
+        <DirectResultForm
+          busy={busy}
+          onCreate={(players) =>
+            mutate({
+              action: 'create-result',
+              players: players.map((player) => ({
+                username: player.username,
+                score: Number(player.score),
+                penalty: Number(player.penalty || 0),
+              })),
+            })
+          }
+        />
       ) : section === 'matches' ? (
         overview?.matches.length ? (
           <div className="mt-4 space-y-2">

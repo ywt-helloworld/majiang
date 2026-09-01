@@ -1,5 +1,15 @@
 import { json, requireAdmin } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { calculateStandings, createGame } from '@/lib/game';
+
+const WINDS = ['东', '南', '西', '北'];
+
+function resultRoomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => chars[value % chars.length]).join('');
+}
 
 async function adminOverview(db: D1Database, adminUserId: string) {
   const [users, matches] = await Promise.all([
@@ -90,6 +100,129 @@ export async function POST(request: Request) {
   const action = typeof body?.action === 'string' ? body.action : '';
   const db = await getDb();
   const now = Date.now();
+
+  if (action === 'create-result') {
+    const rawPlayers = Array.isArray(body?.players) ? body.players : [];
+    if (rawPlayers.length !== 4)
+      return json({ error: '请完整填写东、南、西、北四家结果' }, 400);
+    const players = rawPlayers.map((raw) => {
+      const item = raw as Record<string, unknown>;
+      return {
+        username:
+          typeof item.username === 'string'
+            ? item.username.trim().normalize('NFC')
+            : '',
+        score: Number(item.score),
+        penalty: Number(item.penalty ?? 0),
+      };
+    });
+    if (players.some((player) => !player.username))
+      return json({ error: '四家玩家账号不能为空' }, 400);
+    if (
+      new Set(players.map((player) => player.username.toLowerCase())).size !== 4
+    )
+      return json({ error: '四家玩家账号不能重复' }, 400);
+    if (
+      players.some(
+        (player) => !Number.isInteger(player.score) || player.score % 100 !== 0,
+      )
+    )
+      return json({ error: '最终点数必须是整百点' }, 400);
+    if (players.reduce((sum, player) => sum + player.score, 0) !== 100000)
+      return json({ error: '四家最终点数合计必须为 100,000 点' }, 400);
+    if (
+      players.some(
+        (player) =>
+          !Number.isFinite(player.penalty) ||
+          player.penalty > 0 ||
+          Math.round(player.penalty * 10) !== player.penalty * 10,
+      )
+    )
+      return json({ error: '额外判罚需为 0 或最多一位小数的负数 pt' }, 400);
+
+    const accounts = await Promise.all(
+      players.map((player) =>
+        db
+          .prepare(
+            `SELECT u.id, u.username
+             FROM users u
+             LEFT JOIN deleted_users du ON du.user_id = u.id
+             WHERE u.username = ? COLLATE NOCASE AND du.user_id IS NULL`,
+          )
+          .bind(player.username)
+          .first<{ id: string; username: string }>(),
+      ),
+    );
+    const missingIndex = accounts.findIndex((account) => !account);
+    if (missingIndex >= 0)
+      return json({ error: `${WINDS[missingIndex]}家账号不存在或已删除` }, 404);
+    if (new Set(accounts.map((account) => account!.id)).size !== 4)
+      return json({ error: '四家必须是不同的玩家账号' }, 400);
+
+    const matchId = crypto.randomUUID();
+    const roomId = crypto.randomUUID();
+    let code = resultRoomCode();
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const exists = await db
+        .prepare('SELECT id FROM rooms WHERE code = ?')
+        .bind(code)
+        .first();
+      if (!exists) break;
+      code = resultRoomCode();
+    }
+    const game = createGame(
+      accounts.map((account, seat) => ({
+        userId: account!.id,
+        name: account!.username,
+        seat,
+      })),
+    );
+    game.players = game.players.map((player, seat) => ({
+      ...player,
+      score: players[seat].score,
+      penalty: players[seat].penalty,
+    }));
+    const standings = calculateStandings(game.players);
+    const finished = { ...game, finishedResults: standings };
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO rooms (id, code, host_user_id, status, game_state, current_match_id, version, created_at, updated_at)
+           VALUES (?, ?, ?, 'finished', ?, ?, 0, ?, ?)`,
+        )
+        .bind(
+          roomId,
+          code,
+          auth.user.id,
+          JSON.stringify(finished),
+          matchId,
+          now,
+          now,
+        ),
+      db
+        .prepare(
+          'INSERT INTO matches (id, room_id, started_at, finished_at) VALUES (?, ?, ?, ?)',
+        )
+        .bind(matchId, roomId, now, now),
+      ...standings.map((standing) =>
+        db
+          .prepare(
+            'INSERT INTO match_results (match_id, user_id, final_score, rank, uma, penalty, total_pt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          )
+          .bind(
+            matchId,
+            standing.userId,
+            standing.score,
+            standing.place,
+            standing.rankPoints,
+            standing.penalty,
+            standing.totalPoints,
+            now,
+          ),
+      ),
+    ]);
+    return json({ ...(await adminOverview(db, auth.user.id)), created: true });
+  }
 
   if (action === 'delete-match') {
     const matchId = typeof body?.matchId === 'string' ? body.matchId : '';
