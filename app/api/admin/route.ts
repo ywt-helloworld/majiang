@@ -1,4 +1,4 @@
-import { json, requireAdmin } from '@/lib/auth';
+import { getAdminCredentials, json, requireAdmin } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { calculateStandings, createGame } from '@/lib/game';
 
@@ -242,6 +242,58 @@ export async function POST(request: Request) {
         )
         .bind(now, matchId),
     ]);
+    return json(await adminOverview(db, auth.user.id));
+  }
+
+  if (action === 'rename-user') {
+    const targetUserId = typeof body?.userId === 'string' ? body.userId : '';
+    const username =
+      typeof body?.username === 'string'
+        ? body.username.trim().normalize('NFC')
+        : '';
+    if (!targetUserId) return json({ error: '缺少账号信息' }, 400);
+    if (targetUserId === auth.user.id)
+      return json({ error: '管理员账号名固定，不能修改' }, 400);
+    if (!/^[\p{L}\p{N}_-]{1,12}$/u.test(username))
+      return json(
+        { error: '账户名需为 1–12 个中文、字母、数字、下划线或短横线' },
+        400,
+      );
+
+    const adminCredentials = getAdminCredentials();
+    if (
+      adminCredentials &&
+      username.localeCompare(adminCredentials.username, undefined, {
+        sensitivity: 'accent',
+      }) === 0
+    )
+      return json({ error: '该名称为管理员账号，不能使用' }, 403);
+
+    const [target, duplicate] = await Promise.all([
+      db
+        .prepare(
+          `SELECT u.id, du.user_id AS deletedUserId
+           FROM users u
+           LEFT JOIN deleted_users du ON du.user_id = u.id
+           WHERE u.id = ?`,
+        )
+        .bind(targetUserId)
+        .first<{ id: string; deletedUserId: string | null }>(),
+      db
+        .prepare(
+          'SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?',
+        )
+        .bind(username, targetUserId)
+        .first<{ id: string }>(),
+    ]);
+    if (!target || target.deletedUserId)
+      return json({ error: '该账号已经不存在' }, 404);
+    if (duplicate) return json({ error: '该账户名已被使用' }, 409);
+
+    await db
+      .prepare('UPDATE users SET username = ? WHERE id = ?')
+      .bind(username, targetUserId)
+      .run();
     return json(await adminOverview(db, auth.user.id));
   }
 

@@ -12,6 +12,7 @@ import {
   History,
   LoaderCircle,
   LogOut,
+  Pencil,
   Play,
   Plus,
   RotateCcw,
@@ -36,6 +37,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
@@ -290,20 +300,146 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   );
 }
 
-function AppHeader({ user, logout }: { user: User; logout: () => void }) {
+function AccountRenameDialog({
+  user,
+  onRenamed,
+}: {
+  user: User;
+  onRenamed: (user: User) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState(user.username);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  function changeOpen(next: boolean) {
+    setOpen(next);
+    if (next) {
+      setUsername(user.username);
+      setError('');
+    }
+  }
+
+  async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const data = await api<{ user: User }>('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      onRenamed(data.user);
+      setOpen(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '账户名修改失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-w-32 rounded-xl px-2 text-xs text-muted-foreground"
+          />
+        }
+      >
+        <UserRound />
+        <span className="truncate">{user.username}</span>
+        <Pencil className="size-3.5" />
+      </DialogTrigger>
+      <DialogContent>
+        <form onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>修改账户名</DialogTitle>
+            <DialogDescription>
+              历史战绩和排行榜会保留，并同步显示新名称。
+            </DialogDescription>
+          </DialogHeader>
+          <label
+            htmlFor="profile-username"
+            className="mt-4 block text-xs font-medium text-muted-foreground"
+          >
+            新账户名
+            <Input
+              id="profile-username"
+              autoComplete="nickname"
+              maxLength={12}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              className="mt-2 h-11 rounded-xl text-sm"
+            />
+          </label>
+          {error && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
+              <CircleAlert className="size-3.5" />
+              {error}
+            </p>
+          )}
+          <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+            限 1–12 个中文、字母、数字、下划线或短横线。
+          </p>
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type="submit"
+              disabled={busy || !username.trim() || username === user.username}
+            >
+              {busy && <LoaderCircle className="animate-spin" />}
+              保存新名称
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AppHeader({
+  user,
+  logout,
+  onRenamed,
+}: {
+  user: User;
+  logout: () => void;
+  onRenamed: (user: User) => void;
+}) {
   return (
     <header className="mb-6 flex items-center justify-between">
       <Brand />
-      <Button
-        variant="ghost"
-        className="rounded-xl px-2 text-xs text-muted-foreground"
-        onClick={logout}
-      >
-        <UserRound />
-        {user.username}
-        {user.isAdmin && <ShieldCheck className="text-primary" />}
-        <LogOut />
-      </Button>
+      <div className="flex items-center gap-0.5">
+        {user.isAdmin ? (
+          <div className="flex max-w-32 items-center gap-1.5 px-2 text-xs text-muted-foreground">
+            <UserRound className="size-4 shrink-0" />
+            <span className="truncate">{user.username}</span>
+            <ShieldCheck className="size-4 shrink-0 text-primary" />
+          </div>
+        ) : (
+          <AccountRenameDialog user={user} onRenamed={onRenamed} />
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="rounded-xl text-muted-foreground"
+          aria-label="退出登录"
+          onClick={logout}
+        >
+          <LogOut />
+        </Button>
+      </div>
     </header>
   );
 }
@@ -1424,6 +1560,98 @@ function RankingView({ rows }: { rows: LeaderboardRow[] }) {
   );
 }
 
+function AdminRenameDialog({
+  account,
+  busy,
+  error,
+  onOpen,
+  onRename,
+}: {
+  account: AdminUserRow;
+  busy: boolean;
+  error: string;
+  onOpen: () => void;
+  onRename: (username: string) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState(account.username);
+
+  function changeOpen(next: boolean) {
+    setOpen(next);
+    if (next) {
+      setUsername(account.username);
+      onOpen();
+    }
+  }
+
+  async function submit(event: React.SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (await onRename(username)) setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogTrigger
+        render={<Button size="sm" variant="outline" disabled={busy} />}
+      >
+        <Pencil />
+        改名
+      </DialogTrigger>
+      <DialogContent>
+        <form onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>修改玩家账户名</DialogTitle>
+            <DialogDescription>
+              正在修改“{account.username}”。该玩家原有战绩和排行数据会保留。
+            </DialogDescription>
+          </DialogHeader>
+          <label
+            htmlFor={`admin-username-${account.id}`}
+            className="mt-4 block text-xs font-medium text-muted-foreground"
+          >
+            新账户名
+            <Input
+              id={`admin-username-${account.id}`}
+              maxLength={12}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              className="mt-2 h-11 rounded-xl text-sm"
+            />
+          </label>
+          {error && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-destructive">
+              <CircleAlert className="size-3.5" />
+              {error}
+            </p>
+          )}
+          <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+            限 1–12 个中文、字母、数字、下划线或短横线，且不能与其他账号重复。
+          </p>
+          <DialogFooter className="mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type="submit"
+              disabled={
+                busy || !username.trim() || username === account.username
+              }
+            >
+              {busy && <LoaderCircle className="animate-spin" />}
+              确认修改
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AdminConfirm({
   trigger,
   title,
@@ -1697,6 +1925,8 @@ function AdminView() {
       setOverview(next);
       if (payload.action === 'create-result')
         setSuccess('赛果已生成，并已计入四家历史战绩和排行榜。');
+      if (payload.action === 'rename-user')
+        setSuccess('玩家账户名已修改，原有历史战绩和排行数据保持不变。');
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '管理操作失败');
@@ -1721,7 +1951,7 @@ function AdminView() {
         </Button>
       </div>
       <div className="mt-4 rounded-2xl bg-primary/10 px-4 py-3 text-xs leading-5 text-primary">
-        可直接补录四家最终赛果；撤销战绩会同步影响历史与排行榜。删除账号后已有战绩会匿名保留。
+        可直接补录四家最终赛果；账户改名会保留原有数据。撤销战绩会同步影响历史与排行榜，删除账号后已有战绩会匿名保留。
       </div>
       <div className="mt-4 grid grid-cols-3 rounded-xl bg-muted p-1">
         {(
@@ -1833,15 +2063,33 @@ function AdminView() {
                   )}
                 </div>
                 {!account.isAdmin && (
-                  <AdminConfirm
-                    trigger="删除"
-                    title={`删除账号“${account.username}”？`}
-                    description="该账号会立即退出登录且无法恢复；原有战绩将改为匿名显示。正在房间或对局中的账号不能删除。"
-                    busy={busy || account.inActiveRoom}
-                    onConfirm={() =>
-                      mutate({ action: 'delete-user', userId: account.id })
-                    }
-                  />
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <AdminRenameDialog
+                      account={account}
+                      busy={busy}
+                      error={error}
+                      onOpen={() => {
+                        setError('');
+                        setSuccess('');
+                      }}
+                      onRename={(username) =>
+                        mutate({
+                          action: 'rename-user',
+                          userId: account.id,
+                          username,
+                        })
+                      }
+                    />
+                    <AdminConfirm
+                      trigger="删除"
+                      title={`删除账号“${account.username}”？`}
+                      description="该账号会立即退出登录且无法恢复；原有战绩将改为匿名显示。正在房间或对局中的账号不能删除。"
+                      busy={busy || account.inActiveRoom}
+                      onConfirm={() =>
+                        mutate({ action: 'delete-user', userId: account.id })
+                      }
+                    />
+                  </div>
                 )}
               </div>
             </div>
@@ -2025,7 +2273,14 @@ export default function Home() {
   const locked = room?.status === 'playing';
   return (
     <Shell>
-      <AppHeader user={user} logout={logout} />
+      <AppHeader
+        user={user}
+        logout={logout}
+        onRenamed={(next) => {
+          setUser(next);
+          void bootstrap();
+        }}
+      />
       {error && <Notice text={error} />}
       {tab === 'match' &&
         (!room ? (
