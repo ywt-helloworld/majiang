@@ -447,8 +447,28 @@ export async function POST(request: Request) {
           now,
         ),
     );
+    const yakumanInserts = room.gameState.records.flatMap((record) =>
+      record.winnerId && record.yakuman?.length
+        ? record.yakuman.map((yakumanName) =>
+            db
+              .prepare(
+                `INSERT INTO yakuman_wins (id, match_id, user_id, yakuman_name, round_label, won_at)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+              )
+              .bind(
+                crypto.randomUUID(),
+                room.currentMatchId,
+                record.winnerId,
+                yakumanName,
+                record.round,
+                record.createdAt ?? now,
+              ),
+          )
+        : [],
+    );
     await db.batch([
       ...inserts,
+      ...yakumanInserts,
       db
         .prepare('UPDATE matches SET finished_at = ? WHERE id = ?')
         .bind(now, room.currentMatchId),

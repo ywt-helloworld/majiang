@@ -25,6 +25,8 @@ export type GameRecord = {
   before: GameSnapshot;
   actionType?: Exclude<GameAction['type'], 'undo'>;
   createdAt?: number;
+  winnerId?: string;
+  yakuman?: string[];
 };
 
 export type GameState = GameSnapshot & {
@@ -51,6 +53,7 @@ export type GameAction =
       fu: number;
       repeatDealer?: boolean;
       manualPoints?: number;
+      yakuman?: string[];
     }
   | {
       type: 'tsumo';
@@ -60,6 +63,7 @@ export type GameAction =
       repeatDealer?: boolean;
       manualChildPoints?: number;
       manualDealerPoints?: number;
+      yakuman?: string[];
     }
   | { type: 'draw'; tenpaiIds: string[]; repeatDealer?: boolean }
   | { type: 'adjust'; userId: string; points: number }
@@ -72,6 +76,22 @@ export type GameAction =
 
 const WINDS = ['东', '南', '西', '北'];
 const UMA = [30, 10, -10, -30];
+
+export const YAKUMAN_NAMES = [
+  '国士无双',
+  '四暗刻',
+  '大三元',
+  '小四喜',
+  '大四喜',
+  '字一色',
+  '绿一色',
+  '清老头',
+  '九莲宝灯',
+  '四杠子',
+  '天和',
+  '地和',
+  '累计役满',
+] as const;
 
 export function formatScore(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value);
@@ -211,6 +231,7 @@ function commit(
   before: GameSnapshot,
   label: string,
   actionType: Exclude<GameAction['type'], 'undo'>,
+  metadata?: Pick<GameRecord, 'winnerId' | 'yakuman'>,
 ) {
   const delta = game.players.map(
     (player, index) => player.score - before.players[index].score,
@@ -224,9 +245,21 @@ function commit(
       before,
       actionType,
       createdAt: Date.now(),
+      ...metadata,
     },
     ...game.records,
   ];
+}
+
+function normalizeYakuman(names: string[] | undefined, han: number) {
+  const selected = Array.from(
+    new Set(
+      (names ?? []).filter((name): name is (typeof YAKUMAN_NAMES)[number] =>
+        (YAKUMAN_NAMES as readonly string[]).includes(name),
+      ),
+    ),
+  );
+  return selected.length ? selected : han >= 13 ? ['累计役满'] : [];
 }
 
 export function applyGameAction(
@@ -276,6 +309,7 @@ export function applyGameAction(
       fu: action.fu,
       dealer,
     });
+    const yakuman = normalizeYakuman(action.yakuman, action.han);
     const basePayment =
       action.manualPoints === undefined
         ? points.ron
@@ -288,8 +322,9 @@ export function applyGameAction(
     commit(
       game,
       before,
-      `${winner.name} 荣和 · ${action.manualPoints === undefined ? points.limit || `${points.fu}符${points.han}番` : '手动输入'} · ${formatScore(basePayment)}`,
+      `${winner.name} 荣和 · ${yakuman.length ? yakuman.join('＋') : action.manualPoints === undefined ? points.limit || `${points.fu}符${points.han}番` : '手动输入'} · ${formatScore(basePayment)}`,
       'ron',
+      { winnerId: winner.userId, yakuman },
     );
     return game;
   }
@@ -304,6 +339,7 @@ export function applyGameAction(
       fu: action.fu,
       dealer,
     });
+    const yakuman = normalizeYakuman(action.yakuman, action.han);
     const manual = action.manualChildPoints !== undefined;
     const childBase = manual
       ? validateManualPayment(action.manualChildPoints)
@@ -336,8 +372,9 @@ export function applyGameAction(
     commit(
       game,
       before,
-      `${winner.name} 自摸 · ${manual ? '手动输入' : points.limit || `${points.fu}符${points.han}番`} · ${share}`,
+      `${winner.name} 自摸 · ${yakuman.length ? yakuman.join('＋') : manual ? '手动输入' : points.limit || `${points.fu}符${points.han}番`} · ${share}`,
       'tsumo',
+      { winnerId: winner.userId, yakuman },
     );
     return game;
   }

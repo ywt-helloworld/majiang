@@ -66,6 +66,7 @@ import {
   calculateStandings,
   formatScore,
   roundLabel,
+  YAKUMAN_NAMES,
   type GameAction,
   type GameRecord,
   type GameState,
@@ -112,11 +113,19 @@ type LeaderboardRow = {
   avgRank: number;
   firsts: number;
 };
+type YakumanLeaderboardRow = {
+  id: string;
+  username: string;
+  total: number;
+  latestAt: number;
+  yakumans: Array<{ name: string; count: number }>;
+};
 type Bootstrap = {
   user: User;
   activeRoom: { id: string } | null;
   history: HistoryRow[];
   leaderboard: LeaderboardRow[];
+  yakumanLeaderboard: YakumanLeaderboardRow[];
   currentSeason: SeasonInfo;
   seasons: SeasonInfo[];
 };
@@ -125,7 +134,7 @@ type MatchDetail = {
   roomCode: string;
   startedAt: number;
   finishedAt: number;
-  season: SeasonInfo;
+  season: SeasonInfo | null;
   results: Array<{
     userId: string;
     username: string;
@@ -159,6 +168,8 @@ type AdminMatchRow = {
 type AdminOverview = {
   users: AdminUserRow[];
   matches: AdminMatchRow[];
+  currentSeason: SeasonInfo;
+  seasons: SeasonInfo[];
   created?: boolean;
 };
 type DirectResultPlayer = {
@@ -168,7 +179,7 @@ type DirectResultPlayer = {
 };
 type ScoreMode = 'ron' | 'tsumo' | 'draw' | 'adjust';
 type Tab = 'match' | 'history' | 'ranking' | 'admin';
-type RankingMode = 'total' | 'average' | 'place';
+type RankingMode = 'total' | 'average' | 'place' | 'yakuman';
 
 const FU = [20, 25, 30, 40, 50, 60, 70];
 const HAN = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
@@ -203,10 +214,17 @@ function formatSeasonRange(season: SeasonInfo) {
   const start = new Intl.DateTimeFormat('zh-CN', options).format(
     season.startAt,
   );
+  if (season.endAt === null) return `${start}起 · 等待管理员设置结束日`;
   const end = new Intl.DateTimeFormat('zh-CN', options).format(
     season.endAt - 1,
   );
   return `${start}—${end}`;
+}
+
+function toShanghaiDateInput(timestamp: number | null) {
+  if (timestamp === null) return '';
+  const local = new Date(timestamp - 1 + 8 * 60 * 60 * 1000);
+  return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, '0')}-${String(local.getUTCDate()).padStart(2, '0')}`;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -898,6 +916,8 @@ function ScorePanel({
   const [manualRon, setManualRon] = useState('');
   const [manualChild, setManualChild] = useState('');
   const [manualDealer, setManualDealer] = useState('');
+  const [manualYakuman, setManualYakuman] = useState(false);
+  const [selectedYakuman, setSelectedYakuman] = useState<string[]>([]);
   const [tenpaiIds, setTenpaiIds] = useState<string[]>([]);
   const [adjustId, setAdjustId] = useState(game.players[0]?.userId || '');
   const [adjustPoints, setAdjustPoints] = useState('');
@@ -922,6 +942,10 @@ function ScorePanel({
   const invalid =
     han < 5 &&
     ((mode === 'ron' && fu === 20) || (han === 1 && (fu === 20 || fu === 25)));
+  const yakumanEnabled =
+    (entryMode === 'calculate' && han === 13) ||
+    (entryMode === 'manual' && manualYakuman);
+  const yakuman = yakumanEnabled ? selectedYakuman : [];
 
   function chooseWinner(userId: string) {
     setWinnerId(userId);
@@ -942,6 +966,7 @@ function ScorePanel({
         fu: effectiveFu,
         repeatDealer: dealerWin,
         ...(entryMode === 'manual' ? { manualPoints: Number(manualRon) } : {}),
+        yakuman,
       };
     else if (mode === 'tsumo')
       gameAction = {
@@ -958,6 +983,7 @@ function ScorePanel({
                 : Number(manualDealer),
             }
           : {}),
+        yakuman,
       };
     else if (mode === 'draw')
       gameAction = {
@@ -992,6 +1018,7 @@ function ScorePanel({
         ? true
         : Boolean(winnerId) &&
           (entryMode === 'manual' ? manualScoreValid : !invalid) &&
+          (!yakumanEnabled || selectedYakuman.length > 0) &&
           (mode !== 'ron' || winnerId !== loserId);
   const baseRon = entryMode === 'manual' ? Number(manualRon) : points.ron;
   const baseChild =
@@ -1002,8 +1029,9 @@ function ScorePanel({
         : points.tsumoChild;
   const baseDealer =
     entryMode === 'manual' ? Number(manualDealer) : points.tsumoDealer;
-  const preview =
-    entryMode === 'manual'
+  const preview = yakuman.length
+    ? yakuman.join('＋')
+    : entryMode === 'manual'
       ? '手动输入'
       : points.limit || `${points.fu}符 ${points.han}番`;
   const ronPayment = baseRon + game.honba * 300;
@@ -1172,6 +1200,44 @@ function ScorePanel({
               )}
             </div>
           )}
+          {entryMode === 'manual' && (
+            <button
+              type="button"
+              onClick={() => setManualYakuman((value) => !value)}
+              className={`flex h-10 w-full items-center justify-between rounded-xl border px-3 text-xs font-medium ${manualYakuman ? 'border-primary bg-success-soft text-primary' : 'bg-background text-muted-foreground'}`}
+            >
+              <span>这次和牌记入役满榜</span>
+              <span>{manualYakuman ? '已开启' : '未开启'}</span>
+            </button>
+          )}
+          {yakumanEnabled && (
+            <div>
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                选择和到的役满（可多选；多倍役满请直接输入点数）
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {YAKUMAN_NAMES.map((name) => {
+                  const selected = selectedYakuman.includes(name);
+                  return (
+                    <button
+                      type="button"
+                      key={name}
+                      onClick={() =>
+                        setSelectedYakuman(
+                          selected
+                            ? selectedYakuman.filter((item) => item !== name)
+                            : [...selectedYakuman, name],
+                        )
+                      }
+                      className={`min-h-9 rounded-lg border px-1.5 py-1 text-[10px] font-medium ${selected ? 'border-primary bg-primary text-primary-foreground' : 'bg-background'}`}
+                    >
+                      {name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {(entryMode === 'calculate' && invalid) ||
           (entryMode === 'manual' && !manualScoreValid) ? (
             <p className="text-xs text-destructive">
@@ -1179,6 +1245,8 @@ function ScorePanel({
                 ? '请输入大于 0 的整百点。'
                 : '当前符番组合不成立，请调整符数。'}
             </p>
+          ) : yakumanEnabled && selectedYakuman.length === 0 ? (
+            <p className="text-xs text-destructive">请至少选择一个役满名称。</p>
           ) : (
             <div className="rounded-2xl bg-success-soft px-4 py-3">
               <div>
@@ -1480,6 +1548,15 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
   const [detail, setDetail] = useState<MatchDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const hands = useMemo(() => {
+    const grouped: Array<{ round: string; records: GameRecord[] }> = [];
+    for (const record of detail?.records ?? []) {
+      const latest = grouped[grouped.length - 1];
+      if (latest?.round === record.round) latest.records.push(record);
+      else grouped.push({ round: record.round, records: [record] });
+    }
+    return grouped;
+  }, [detail]);
 
   async function load() {
     setLoading(true);
@@ -1508,6 +1585,7 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
         render={
           <button
             type="button"
+            aria-label={`查看房间 ${row.roomCode} 的牌局详情`}
             className="flex w-full items-center rounded-2xl border bg-card p-4 text-left transition active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           />
         }
@@ -1546,7 +1624,7 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
           <SheetTitle>房间 {row.roomCode}</SheetTitle>
           <SheetDescription>
             {detail
-              ? `${new Date(detail.finishedAt).toLocaleString('zh-CN')} · ${detail.season.label}`
+              ? `${new Date(detail.finishedAt).toLocaleString('zh-CN')} · ${detail.season?.label ?? '早期记录'}`
               : '正在读取牌局详情'}
           </SheetDescription>
         </SheetHeader>
@@ -1569,7 +1647,9 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-semibold">最终结果</h2>
                   <span className="text-xs text-muted-foreground">
-                    {formatSeasonRange(detail.season)}
+                    {detail.season
+                      ? formatSeasonRange(detail.season)
+                      : '未归入赛季'}
                   </span>
                 </div>
                 <div className="mt-2 overflow-hidden rounded-2xl border bg-card">
@@ -1604,7 +1684,7 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-semibold">牌局过程</h2>
                   <span className="text-xs text-muted-foreground">
-                    {detail.records.length} 条记录
+                    {hands.length} 局
                   </span>
                 </div>
                 {detail.records.length ? (
@@ -1615,16 +1695,21 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
                         条过程；新牌局会完整保存。
                       </p>
                     )}
-                    {detail.records.map((record, index) => {
-                      const changes = record.before.players
+                    {hands.map((hand, index) => {
+                      const first = hand.records[0];
+                      const changes = first.before.players
                         .map((player, playerIndex) => ({
                           player,
-                          delta: record.delta[playerIndex] ?? 0,
+                          delta: hand.records.reduce(
+                            (sum, record) =>
+                              sum + (record.delta[playerIndex] ?? 0),
+                            0,
+                          ),
                         }))
                         .filter((item) => item.delta !== 0);
                       return (
                         <article
-                          key={record.id}
+                          key={`${hand.round}-${first.id}`}
                           className="rounded-2xl border bg-card p-4"
                         >
                           <div className="flex items-start gap-3">
@@ -1633,11 +1718,18 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
                             </span>
                             <div className="min-w-0 flex-1">
                               <p className="text-xs text-muted-foreground">
-                                {record.round}
+                                {hand.round}
                               </p>
-                              <p className="mt-1 text-sm font-semibold leading-5">
-                                {record.label}
-                              </p>
+                              <div className="mt-1 space-y-1">
+                                {hand.records.map((record) => (
+                                  <p
+                                    key={record.id}
+                                    className="text-sm font-semibold leading-5"
+                                  >
+                                    {record.label}
+                                  </p>
+                                ))}
+                              </div>
                             </div>
                           </div>
                           {changes.length > 0 && (
@@ -1716,6 +1808,7 @@ function HistoryView({ rows }: { rows: HistoryRow[] }) {
 
 function RankingView({
   rows,
+  yakumanRows,
   seasons,
   currentSeason,
   seasonId,
@@ -1723,6 +1816,7 @@ function RankingView({
   onSeasonChange,
 }: {
   rows: LeaderboardRow[];
+  yakumanRows: YakumanLeaderboardRow[];
   seasons: SeasonInfo[];
   currentSeason: SeasonInfo;
   seasonId: string;
@@ -1730,13 +1824,17 @@ function RankingView({
   onSeasonChange: (seasonId: string) => Promise<void>;
 }) {
   const [mode, setMode] = useState<RankingMode>('total');
+  const [rankingNow] = useState(() => Date.now());
   const selectedSeason = seasons.find((season) => season.id === seasonId);
-  const daysRemaining = selectedSeason?.isCurrent
-    ? Math.max(
-        0,
-        Math.ceil((selectedSeason.endAt - Date.now()) / (24 * 60 * 60 * 1000)),
-      )
-    : null;
+  const daysRemaining =
+    selectedSeason?.isCurrent && selectedSeason.endAt !== null
+      ? Math.max(
+          0,
+          Math.ceil(
+            (selectedSeason.endAt - rankingNow) / (24 * 60 * 60 * 1000),
+          ),
+        )
+      : null;
   const sorted = useMemo(
     () =>
       [...rows].sort((a, b) => {
@@ -1755,7 +1853,9 @@ function RankingView({
       ? '按累计 pt 从高到低排名'
       : mode === 'average'
         ? '按每场平均 pt 从高到低排名'
-        : '按平均顺位从低到高排名';
+        : mode === 'place'
+          ? '按平均顺位从低到高排名'
+          : '记录每位玩家和到的役满';
   return (
     <section>
       <h1 className="text-2xl font-semibold">战绩排行</h1>
@@ -1797,12 +1897,13 @@ function RankingView({
           </NativeSelect>
         </div>
       </div>
-      <div className="mt-4 grid grid-cols-3 rounded-xl bg-muted p-1">
+      <div className="mt-4 grid grid-cols-4 rounded-xl bg-muted p-1">
         {(
           [
             ['total', '累计 pt'],
             ['average', '平均 pt'],
             ['place', '平均顺位'],
+            ['yakuman', '役满榜'],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -1814,7 +1915,36 @@ function RankingView({
           </button>
         ))}
       </div>
-      {rows.length ? (
+      {mode === 'yakuman' && yakumanRows.length ? (
+        <div className="mt-5 overflow-hidden rounded-3xl border bg-card">
+          {yakumanRows.map((row, index) => (
+            <div
+              key={row.id}
+              className="flex items-start border-b p-4 last:border-0"
+            >
+              <span
+                className={`grid size-9 shrink-0 place-items-center rounded-xl text-sm font-semibold ${index < 3 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
+              >
+                {index + 1}
+              </span>
+              <div className="ml-3 min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">{row.username}</p>
+                <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                  {row.yakumans
+                    .map(
+                      (yakuman) =>
+                        `${yakuman.name}${yakuman.count > 1 ? ` ×${yakuman.count}` : ''}`,
+                    )
+                    .join(' · ')}
+                </p>
+              </div>
+              <p className="shrink-0 font-mono font-semibold text-primary">
+                {row.total} 次
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : mode !== 'yakuman' && rows.length ? (
         <div className="mt-5 overflow-hidden rounded-3xl border bg-card">
           {sorted.map((row, index) => {
             const metric = mode === 'average' ? row.avgPt : row.totalPt;
@@ -1852,8 +1982,12 @@ function RankingView({
       ) : (
         <Empty
           icon={BarChart3}
-          title="本赛季还没有战绩"
-          text="完成的半庄会自动计入所处赛季的排行榜。"
+          title={mode === 'yakuman' ? '本赛季还没有役满' : '本赛季还没有战绩'}
+          text={
+            mode === 'yakuman'
+              ? '记录役满和牌后，会自动显示在这里。'
+              : '完成的半庄会自动计入所处赛季的排行榜。'
+          }
         />
       )}
     </section>
@@ -2184,10 +2318,88 @@ function DirectResultForm({
   );
 }
 
-function AdminView() {
-  const [section, setSection] = useState<'create' | 'matches' | 'users'>(
-    'create',
+function SeasonAdmin({
+  overview,
+  busy,
+  onSave,
+}: {
+  overview: AdminOverview;
+  busy: boolean;
+  onSave: (endDate: string) => Promise<boolean>;
+}) {
+  const [endDate, setEndDate] = useState(
+    toShanghaiDateInput(overview.currentSeason.endAt),
   );
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="rounded-2xl border bg-card p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">
+              {overview.currentSeason.label}
+            </p>
+            <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+              {formatSeasonRange(overview.currentSeason)}
+            </p>
+          </div>
+          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+            当前赛季
+          </span>
+        </div>
+        <label
+          htmlFor="season-end-date"
+          className="mt-4 block text-xs font-medium text-muted-foreground"
+        >
+          赛季结束日（北京时间）
+          <Input
+            id="season-end-date"
+            type="date"
+            value={endDate}
+            onChange={(event) => setEndDate(event.target.value)}
+            className="mt-2 h-11 rounded-xl text-sm"
+          />
+        </label>
+        <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+          结束日当天仍计入本赛季。到期后系统会开启下一赛季，再由管理员设置新的结束日。
+        </p>
+        <Button
+          className="mt-4 h-11 w-full rounded-2xl"
+          disabled={busy || !endDate}
+          onClick={() => void onSave(endDate)}
+        >
+          {busy && <LoaderCircle className="animate-spin" />}
+          保存赛季结束日
+        </Button>
+      </div>
+      {overview.seasons.length > 1 && (
+        <div className="rounded-2xl border bg-card p-4">
+          <p className="text-sm font-semibold">历史赛季</p>
+          <div className="mt-3 space-y-2">
+            {overview.seasons
+              .filter((season) => season.id !== overview.currentSeason.id)
+              .map((season) => (
+                <div
+                  key={season.id}
+                  className="flex items-center justify-between gap-3 text-xs"
+                >
+                  <span className="font-medium">{season.label}</span>
+                  <span className="text-muted-foreground">
+                    {formatSeasonRange(season)}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminView() {
+  const [section, setSection] = useState<
+    'create' | 'matches' | 'users' | 'season'
+  >('create');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -2227,6 +2439,8 @@ function AdminView() {
         setSuccess('赛果已生成，并已计入四家历史战绩和排行榜。');
       if (payload.action === 'rename-user')
         setSuccess('玩家账户名已修改，原有历史战绩和排行数据保持不变。');
+      if (payload.action === 'set-season-end')
+        setSuccess('当前赛季结束日已更新。');
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '管理操作失败');
@@ -2242,7 +2456,7 @@ function AdminView() {
         <div>
           <h1 className="text-2xl font-semibold">管理后台</h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            管理战绩记录与玩家账号
+            管理战绩记录、玩家账号与赛季
           </p>
         </div>
         <Button size="sm" variant="outline" disabled={loading} onClick={load}>
@@ -2251,14 +2465,15 @@ function AdminView() {
         </Button>
       </div>
       <div className="mt-4 rounded-2xl bg-primary/10 px-4 py-3 text-xs leading-5 text-primary">
-        可直接补录四家最终赛果；账户改名会保留原有数据。撤销战绩会同步影响历史与排行榜，删除账号后已有战绩会匿名保留。
+        可补录赛果、设置赛季结束日并管理账号。撤销战绩会同步影响历史、战绩排行与役满榜。
       </div>
-      <div className="mt-4 grid grid-cols-3 rounded-xl bg-muted p-1">
+      <div className="mt-4 grid grid-cols-4 rounded-xl bg-muted p-1">
         {(
           [
             ['create', '补录赛果'],
             ['matches', '对局记录'],
             ['users', '账号管理'],
+            ['season', '赛季设置'],
           ] as const
         ).map(([value, label]) => (
           <button
@@ -2338,6 +2553,19 @@ function AdminView() {
             text="正式结束的半庄会显示在这里。"
           />
         )
+      ) : section === 'season' && overview ? (
+        <SeasonAdmin
+          key={overview.currentSeason.id}
+          overview={overview}
+          busy={busy}
+          onSave={(endDate) =>
+            mutate({
+              action: 'set-season-end',
+              seasonId: overview.currentSeason.id,
+              endDate,
+            })
+          }
+        />
       ) : overview?.users.length ? (
         <div className="mt-4 space-y-2">
           {overview.users.map((account) => (
@@ -2475,6 +2703,9 @@ export default function Home() {
   const [room, setRoom] = useState<Room | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
+  const [yakumanLeaderboard, setYakumanLeaderboard] = useState<
+    YakumanLeaderboardRow[]
+  >([]);
   const [seasons, setSeasons] = useState<SeasonInfo[]>([]);
   const [currentSeason, setCurrentSeason] = useState<SeasonInfo | null>(null);
   const [rankingSeasonId, setRankingSeasonId] = useState('');
@@ -2494,6 +2725,7 @@ export default function Home() {
       setUser(data.user);
       setHistory(data.history);
       setLeaderboard(data.leaderboard);
+      setYakumanLeaderboard(data.yakumanLeaderboard);
       setSeasons(data.seasons);
       setCurrentSeason(data.currentSeason);
       setRankingSeasonId(data.currentSeason.id);
@@ -2557,6 +2789,7 @@ export default function Home() {
     await api('/api/session', { method: 'DELETE' }).catch(() => undefined);
     setUser(null);
     setRoom(null);
+    setYakumanLeaderboard([]);
     setSeasons([]);
     setCurrentSeason(null);
     setRankingSeasonId('');
@@ -2567,10 +2800,12 @@ export default function Home() {
     setRankingLoading(true);
     setError('');
     try {
-      const data = await api<{ leaderboard: LeaderboardRow[] }>(
-        `/api/leaderboard?season=${encodeURIComponent(seasonId)}`,
-      );
+      const data = await api<{
+        leaderboard: LeaderboardRow[];
+        yakumanLeaderboard: YakumanLeaderboardRow[];
+      }>(`/api/leaderboard?season=${encodeURIComponent(seasonId)}`);
       setLeaderboard(data.leaderboard);
+      setYakumanLeaderboard(data.yakumanLeaderboard);
       setRankingSeasonId(seasonId);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : '排行榜加载失败');
@@ -2622,6 +2857,7 @@ export default function Home() {
       {tab === 'ranking' && currentSeason && (
         <RankingView
           rows={leaderboard}
+          yakumanRows={yakumanLeaderboard}
           seasons={seasons}
           currentSeason={currentSeason}
           seasonId={rankingSeasonId}

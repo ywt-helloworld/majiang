@@ -83,7 +83,7 @@ export async function GET(request: Request) {
     roomCode: match.roomCode,
     startedAt: match.startedAt,
     finishedAt: match.finishedAt,
-    season: getSeasonAt(match.finishedAt),
+    season: await getSeasonAt(db, match.finishedAt),
     results: results.results.map((result) => ({
       ...result,
       seat: seats.get(result.userId) ?? null,

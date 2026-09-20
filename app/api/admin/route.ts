@@ -1,6 +1,11 @@
 import { getAdminCredentials, json, requireAdmin } from '@/lib/auth';
 import { getDb } from '@/lib/db';
 import { calculateStandings, createGame } from '@/lib/game';
+import {
+  ensureCurrentSeason,
+  listSeasons,
+  seasonEndFromShanghaiDate,
+} from '@/lib/season';
 
 const WINDS = ['东', '南', '西', '北'];
 
@@ -12,7 +17,8 @@ function resultRoomCode() {
 }
 
 async function adminOverview(db: D1Database, adminUserId: string) {
-  const [users, matches] = await Promise.all([
+  const currentSeason = await ensureCurrentSeason(db);
+  const [users, matches, seasons] = await Promise.all([
     db
       .prepare(
         `SELECT u.id, u.username, u.created_at AS createdAt,
@@ -68,6 +74,7 @@ async function adminOverview(db: D1Database, adminUserId: string) {
         playerCount: number;
         playerNames: string | null;
       }>(),
+    listSeasons(db),
   ]);
   return {
     users: users.results.map((user) => ({
@@ -81,6 +88,8 @@ async function adminOverview(db: D1Database, adminUserId: string) {
       playerCount: Number(match.playerCount),
       playerNames: match.playerNames ?? '无玩家记录',
     })),
+    currentSeason,
+    seasons,
   };
 }
 
@@ -100,6 +109,32 @@ export async function POST(request: Request) {
   const action = typeof body?.action === 'string' ? body.action : '';
   const db = await getDb();
   const now = Date.now();
+
+  if (action === 'set-season-end') {
+    const seasonId = typeof body?.seasonId === 'string' ? body.seasonId : '';
+    const endDate = typeof body?.endDate === 'string' ? body.endDate : '';
+    const currentSeason = await ensureCurrentSeason(db, now);
+    if (!seasonId || seasonId !== currentSeason.id)
+      return json({ error: '只能设置当前赛季的结束时间' }, 400);
+    const endAt = seasonEndFromShanghaiDate(endDate);
+    if (!endAt) return json({ error: '请选择有效的赛季结束日期' }, 400);
+    if (endAt <= now) return json({ error: '赛季结束日期不能早于今天' }, 400);
+    if (endAt <= currentSeason.startAt)
+      return json({ error: '赛季结束日期必须晚于开始日期' }, 400);
+    const latestMatch = await db
+      .prepare(
+        'SELECT MAX(finished_at) AS latest FROM matches WHERE finished_at >= ?',
+      )
+      .bind(currentSeason.startAt)
+      .first<{ latest: number | null }>();
+    if (latestMatch?.latest && endAt <= latestMatch.latest)
+      return json({ error: '结束日期不能早于本赛季已有牌局' }, 400);
+    await db
+      .prepare('UPDATE seasons SET end_at = ? WHERE id = ?')
+      .bind(endAt, seasonId)
+      .run();
+    return json(await adminOverview(db, auth.user.id));
+  }
 
   if (action === 'create-result') {
     const rawPlayers = Array.isArray(body?.players) ? body.players : [];
@@ -234,6 +269,7 @@ export async function POST(request: Request) {
     if (!match.finishedAt)
       return json({ error: '进行中的对局不能作为历史记录撤销' }, 409);
     await db.batch([
+      db.prepare('DELETE FROM yakuman_wins WHERE match_id = ?').bind(matchId),
       db.prepare('DELETE FROM match_results WHERE match_id = ?').bind(matchId),
       db.prepare('DELETE FROM matches WHERE id = ?').bind(matchId),
       db
