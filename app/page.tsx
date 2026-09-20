@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
@@ -18,7 +19,6 @@ import {
   Plus,
   RotateCcw,
   ShieldCheck,
-  Spade,
   Trash2,
   Trophy,
   UserMinus,
@@ -239,16 +239,18 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Brand() {
   return (
-    <div className="flex items-center gap-3">
-      <span className="grid size-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-[0_8px_24px_rgb(24_91_67/18%)]">
-        <Spade className="size-5" />
+    <div className="flex items-center gap-3.5">
+      <span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-[20px] border border-primary/10 bg-[#eef5cc] shadow-[0_8px_24px_rgb(24_91_67/14%)]">
+        <Image
+          src="/ichihime.png"
+          alt="雀魂角色一姬"
+          width={56}
+          height={56}
+          priority
+          className="size-full object-contain"
+        />
       </span>
-      <div>
-        <p className="font-semibold tracking-tight">在线立直计分</p>
-        <p className="text-[11px] text-muted-foreground">
-          四人房间 · 只记分，不显示牌局
-        </p>
-      </div>
+      <p className="text-2xl font-semibold tracking-tight">绝好调</p>
     </div>
   );
 }
