@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
+  CalendarDays,
   Check,
   ChevronRight,
   CircleAlert,
@@ -47,6 +48,18 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from '@/components/ui/native-select';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
 import {
   calculateHandPoints,
@@ -54,8 +67,10 @@ import {
   formatScore,
   roundLabel,
   type GameAction,
+  type GameRecord,
   type GameState,
 } from '@/lib/game';
+import type { SeasonInfo } from '@/lib/season';
 
 type User = { id: string; username: string; isAdmin: boolean };
 type RoomMember = {
@@ -85,6 +100,8 @@ type HistoryRow = {
   penalty: number;
   totalPt: number;
   createdAt: number;
+  seasonId: string;
+  seasonLabel: string;
 };
 type LeaderboardRow = {
   id: string;
@@ -100,6 +117,27 @@ type Bootstrap = {
   activeRoom: { id: string } | null;
   history: HistoryRow[];
   leaderboard: LeaderboardRow[];
+  currentSeason: SeasonInfo;
+  seasons: SeasonInfo[];
+};
+type MatchDetail = {
+  matchId: string;
+  roomCode: string;
+  startedAt: number;
+  finishedAt: number;
+  season: SeasonInfo;
+  results: Array<{
+    userId: string;
+    username: string;
+    finalScore: number;
+    rank: number;
+    uma: number;
+    penalty: number;
+    totalPt: number;
+    seat: number | null;
+  }>;
+  records: GameRecord[];
+  processLimited: boolean;
 };
 type AdminUserRow = {
   id: string;
@@ -154,6 +192,21 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 
 function signed(value: number, suffix = '') {
   return `${value > 0 ? '+' : ''}${Number(value).toFixed(1)}${suffix}`;
+}
+
+function formatSeasonRange(season: SeasonInfo) {
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: 'Asia/Shanghai',
+    month: 'numeric',
+    day: 'numeric',
+  };
+  const start = new Intl.DateTimeFormat('zh-CN', options).format(
+    season.startAt,
+  );
+  const end = new Intl.DateTimeFormat('zh-CN', options).format(
+    season.endAt - 1,
+  );
+  return `${start}—${end}`;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
@@ -1422,43 +1475,232 @@ function FinishedRoom({
   );
 }
 
+function MatchDetailSheet({ row }: { row: HistoryRow }) {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<MatchDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      setDetail(
+        await api<MatchDetail>(
+          `/api/match?id=${encodeURIComponent(row.matchId)}`,
+        ),
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '牌局详情加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function changeOpen(next: boolean) {
+    setOpen(next);
+    if (next && !detail && !loading) void load();
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={changeOpen}>
+      <SheetTrigger
+        render={
+          <button
+            type="button"
+            className="flex w-full items-center rounded-2xl border bg-card p-4 text-left transition active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          />
+        }
+      >
+        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-sm font-semibold">
+          {row.rank}
+        </span>
+        <span className="ml-3 min-w-0 flex-1">
+          <span className="block text-sm font-semibold">
+            房间 {row.roomCode}
+          </span>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            {new Date(row.createdAt).toLocaleDateString('zh-CN')} ·{' '}
+            {row.seasonLabel} · {formatScore(row.finalScore)} 点
+          </span>
+        </span>
+        <span className="ml-2 text-right">
+          <span
+            className={`block font-mono font-semibold ${row.totalPt >= 0 ? 'text-primary' : 'text-destructive'}`}
+          >
+            {signed(row.totalPt)}
+          </span>
+          {row.penalty !== 0 && (
+            <span className="mt-1 block text-xs text-destructive">
+              判罚 {row.penalty} pt
+            </span>
+          )}
+        </span>
+        <ChevronRight className="ml-2 size-4 shrink-0 text-muted-foreground" />
+      </SheetTrigger>
+      <SheetContent
+        side="bottom"
+        className="mx-auto max-h-[92dvh] w-full max-w-[560px] rounded-t-[28px]"
+      >
+        <SheetHeader className="border-b px-5 py-4 pr-12">
+          <SheetTitle>房间 {row.roomCode}</SheetTitle>
+          <SheetDescription>
+            {detail
+              ? `${new Date(detail.finishedAt).toLocaleString('zh-CN')} · ${detail.season.label}`
+              : '正在读取牌局详情'}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(24px,env(safe-area-inset-bottom))]">
+          {loading ? (
+            <div className="grid min-h-56 place-items-center text-muted-foreground">
+              <LoaderCircle className="size-5 animate-spin" />
+            </div>
+          ) : error ? (
+            <div className="py-12 text-center">
+              <CircleAlert className="mx-auto size-6 text-destructive" />
+              <p className="mt-3 text-sm text-destructive">{error}</p>
+              <Button className="mt-4" variant="outline" onClick={load}>
+                重新加载
+              </Button>
+            </div>
+          ) : detail ? (
+            <div className="space-y-5 pt-4">
+              <section>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold">最终结果</h2>
+                  <span className="text-xs text-muted-foreground">
+                    {formatSeasonRange(detail.season)}
+                  </span>
+                </div>
+                <div className="mt-2 overflow-hidden rounded-2xl border bg-card">
+                  {detail.results.map((result) => (
+                    <div
+                      key={result.userId}
+                      className="flex items-center border-b px-3 py-3 last:border-0"
+                    >
+                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-xs font-semibold">
+                        {result.rank}
+                      </span>
+                      <div className="ml-3 min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">
+                          {result.seat === null ? '—' : WINDS[result.seat]} ·{' '}
+                          {result.username}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {formatScore(result.finalScore)} 点 · 位次分{' '}
+                          {signed(result.uma)}
+                        </p>
+                      </div>
+                      <p
+                        className={`font-mono text-sm font-semibold ${result.totalPt >= 0 ? 'text-primary' : 'text-destructive'}`}
+                      >
+                        {signed(result.totalPt)} pt
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold">牌局过程</h2>
+                  <span className="text-xs text-muted-foreground">
+                    {detail.records.length} 条记录
+                  </span>
+                </div>
+                {detail.records.length ? (
+                  <div className="mt-2 space-y-2">
+                    {detail.processLimited && (
+                      <p className="rounded-xl bg-muted px-3 py-2 text-xs leading-5 text-muted-foreground">
+                        这是一条旧记录，当时最多保留最近 30
+                        条过程；新牌局会完整保存。
+                      </p>
+                    )}
+                    {detail.records.map((record, index) => {
+                      const changes = record.before.players
+                        .map((player, playerIndex) => ({
+                          player,
+                          delta: record.delta[playerIndex] ?? 0,
+                        }))
+                        .filter((item) => item.delta !== 0);
+                      return (
+                        <article
+                          key={record.id}
+                          className="rounded-2xl border bg-card p-4"
+                        >
+                          <div className="flex items-start gap-3">
+                            <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-xs font-semibold text-primary">
+                              {index + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs text-muted-foreground">
+                                {record.round}
+                              </p>
+                              <p className="mt-1 text-sm font-semibold leading-5">
+                                {record.label}
+                              </p>
+                            </div>
+                          </div>
+                          {changes.length > 0 && (
+                            <div className="mt-3 space-y-1.5 border-t pt-3">
+                              {changes.map(({ player, delta }) => (
+                                <div
+                                  key={player.userId}
+                                  className="flex items-center justify-between gap-3 text-xs"
+                                >
+                                  <span className="min-w-0 truncate text-muted-foreground">
+                                    {WINDS[player.seat]} · {player.name}
+                                  </span>
+                                  <span className="shrink-0 font-mono">
+                                    {formatScore(player.score)} →{' '}
+                                    {formatScore(player.score + delta)}{' '}
+                                    <span
+                                      className={
+                                        delta > 0
+                                          ? 'text-primary'
+                                          : 'text-destructive'
+                                      }
+                                    >
+                                      ({delta > 0 ? '+' : ''}
+                                      {formatScore(delta)})
+                                    </span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-2xl border border-dashed px-5 py-8 text-center">
+                    <History className="mx-auto size-5 text-muted-foreground" />
+                    <p className="mt-3 text-sm font-medium">没有逐局过程</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      补录赛果或较早的牌局可能只保存最终结果。
+                    </p>
+                  </div>
+                )}
+              </section>
+            </div>
+          ) : null}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function HistoryView({ rows }: { rows: HistoryRow[] }) {
   return (
     <section>
       <h1 className="text-2xl font-semibold">历史战绩</h1>
       <p className="mt-1 text-xs text-muted-foreground">
-        最近 30 场正式结束的半庄
+        点击牌局可查看和牌、流局、立直与点数变化
       </p>
       {rows.length ? (
         <div className="mt-5 space-y-2">
           {rows.map((row) => (
-            <div
-              key={row.matchId}
-              className="flex items-center rounded-2xl border bg-card p-4"
-            >
-              <span className="grid size-10 place-items-center rounded-xl bg-muted text-sm font-semibold">
-                {row.rank}
-              </span>
-              <div className="ml-3 min-w-0 flex-1">
-                <p className="text-sm font-semibold">房间 {row.roomCode}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {new Date(row.createdAt).toLocaleDateString('zh-CN')} ·{' '}
-                  {formatScore(row.finalScore)} 点
-                </p>
-              </div>
-              <div className="text-right">
-                <p
-                  className={`font-mono font-semibold ${row.totalPt >= 0 ? 'text-primary' : 'text-destructive'}`}
-                >
-                  {signed(row.totalPt)}
-                </p>
-                {row.penalty !== 0 && (
-                  <p className="mt-1 text-[10px] text-destructive">
-                    判罚 {row.penalty} pt
-                  </p>
-                )}
-              </div>
-            </div>
+            <MatchDetailSheet key={row.matchId} row={row} />
           ))}
         </div>
       ) : (
@@ -1472,8 +1714,29 @@ function HistoryView({ rows }: { rows: HistoryRow[] }) {
   );
 }
 
-function RankingView({ rows }: { rows: LeaderboardRow[] }) {
+function RankingView({
+  rows,
+  seasons,
+  currentSeason,
+  seasonId,
+  loading,
+  onSeasonChange,
+}: {
+  rows: LeaderboardRow[];
+  seasons: SeasonInfo[];
+  currentSeason: SeasonInfo;
+  seasonId: string;
+  loading: boolean;
+  onSeasonChange: (seasonId: string) => Promise<void>;
+}) {
   const [mode, setMode] = useState<RankingMode>('total');
+  const selectedSeason = seasons.find((season) => season.id === seasonId);
+  const daysRemaining = selectedSeason?.isCurrent
+    ? Math.max(
+        0,
+        Math.ceil((selectedSeason.endAt - Date.now()) / (24 * 60 * 60 * 1000)),
+      )
+    : null;
   const sorted = useMemo(
     () =>
       [...rows].sort((a, b) => {
@@ -1497,6 +1760,43 @@ function RankingView({ rows }: { rows: LeaderboardRow[] }) {
     <section>
       <h1 className="text-2xl font-semibold">战绩排行</h1>
       <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      <div className="mt-4 rounded-2xl bg-primary/10 p-4 text-primary">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="size-4 shrink-0" />
+          <p className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {selectedSeason?.label ?? '全部赛季'}
+          </p>
+          {loading && <LoaderCircle className="size-4 animate-spin" />}
+        </div>
+        <div className="mt-3 flex items-end justify-between gap-3">
+          <p className="text-xs leading-5 opacity-80">
+            {selectedSeason
+              ? formatSeasonRange(selectedSeason)
+              : '全部历史牌局'}
+            {daysRemaining !== null && ` · 还剩 ${daysRemaining} 天`}
+          </p>
+          <NativeSelect className="w-36 shrink-0" size="sm">
+            <select
+              aria-label="选择排行榜赛季"
+              value={seasonId}
+              disabled={loading}
+              onChange={(event) => void onSeasonChange(event.target.value)}
+            >
+              <NativeSelectOption value={currentSeason.id}>
+                当前赛季
+              </NativeSelectOption>
+              <NativeSelectOption value="all">全部赛季</NativeSelectOption>
+              {seasons
+                .filter((season) => season.id !== currentSeason.id)
+                .map((season) => (
+                  <NativeSelectOption key={season.id} value={season.id}>
+                    {season.label}
+                  </NativeSelectOption>
+                ))}
+            </select>
+          </NativeSelect>
+        </div>
+      </div>
       <div className="mt-4 grid grid-cols-3 rounded-xl bg-muted p-1">
         {(
           [
@@ -1552,8 +1852,8 @@ function RankingView({ rows }: { rows: LeaderboardRow[] }) {
       ) : (
         <Empty
           icon={BarChart3}
-          title="排行榜等待开张"
-          text="完成的半庄会自动计入累计排行榜。"
+          title="本赛季还没有战绩"
+          text="完成的半庄会自动计入所处赛季的排行榜。"
         />
       )}
     </section>
@@ -2175,6 +2475,10 @@ export default function Home() {
   const [room, setRoom] = useState<Room | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
+  const [seasons, setSeasons] = useState<SeasonInfo[]>([]);
+  const [currentSeason, setCurrentSeason] = useState<SeasonInfo | null>(null);
+  const [rankingSeasonId, setRankingSeasonId] = useState('');
+  const [rankingLoading, setRankingLoading] = useState(false);
   const [tab, setTab] = useState<Tab>('match');
   const [error, setError] = useState('');
 
@@ -2190,6 +2494,9 @@ export default function Home() {
       setUser(data.user);
       setHistory(data.history);
       setLeaderboard(data.leaderboard);
+      setSeasons(data.seasons);
+      setCurrentSeason(data.currentSeason);
+      setRankingSeasonId(data.currentSeason.id);
       if (data.activeRoom) await loadRoom(data.activeRoom.id);
       else setRoom(null);
     } catch {
@@ -2250,7 +2557,26 @@ export default function Home() {
     await api('/api/session', { method: 'DELETE' }).catch(() => undefined);
     setUser(null);
     setRoom(null);
+    setSeasons([]);
+    setCurrentSeason(null);
+    setRankingSeasonId('');
     setTab('match');
+  }
+
+  async function changeRankingSeason(seasonId: string) {
+    setRankingLoading(true);
+    setError('');
+    try {
+      const data = await api<{ leaderboard: LeaderboardRow[] }>(
+        `/api/leaderboard?season=${encodeURIComponent(seasonId)}`,
+      );
+      setLeaderboard(data.leaderboard);
+      setRankingSeasonId(seasonId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '排行榜加载失败');
+    } finally {
+      setRankingLoading(false);
+    }
   }
   if (loading)
     return (
@@ -2293,7 +2619,16 @@ export default function Home() {
           <FinishedRoom room={room} act={act} busy={busy} />
         ))}
       {tab === 'history' && <HistoryView rows={history} />}
-      {tab === 'ranking' && <RankingView rows={leaderboard} />}
+      {tab === 'ranking' && currentSeason && (
+        <RankingView
+          rows={leaderboard}
+          seasons={seasons}
+          currentSeason={currentSeason}
+          seasonId={rankingSeasonId}
+          loading={rankingLoading}
+          onSeasonChange={changeRankingSeason}
+        />
+      )}
       {tab === 'admin' && user.isAdmin && <AdminView />}
       <BottomNav
         tab={tab}

@@ -23,6 +23,8 @@ export type GameRecord = {
   round: string;
   delta: number[];
   before: GameSnapshot;
+  actionType?: Exclude<GameAction['type'], 'undo'>;
+  createdAt?: number;
 };
 
 export type GameState = GameSnapshot & {
@@ -204,7 +206,12 @@ function finishHand(game: GameState, repeatDealer: boolean, draw = false) {
   }
 }
 
-function commit(game: GameState, before: GameSnapshot, label: string) {
+function commit(
+  game: GameState,
+  before: GameSnapshot,
+  label: string,
+  actionType: Exclude<GameAction['type'], 'undo'>,
+) {
   const delta = game.players.map(
     (player, index) => player.score - before.players[index].score,
   );
@@ -215,9 +222,11 @@ function commit(game: GameState, before: GameSnapshot, label: string) {
       round: `${roundLabel(before)} · ${before.honba}本场`,
       delta,
       before,
+      actionType,
+      createdAt: Date.now(),
     },
     ...game.records,
-  ].slice(0, 30);
+  ];
 }
 
 export function applyGameAction(
@@ -247,7 +256,7 @@ export function applyGameAction(
     target.score -= 1000;
     game.sticks += 1;
     game.riichiIds.push(target.userId);
-    commit(game, before, `${target.name} 立直`);
+    commit(game, before, `${target.name} 立直`, 'riichi');
     return game;
   }
 
@@ -280,6 +289,7 @@ export function applyGameAction(
       game,
       before,
       `${winner.name} 荣和 · ${action.manualPoints === undefined ? points.limit || `${points.fu}符${points.han}番` : '手动输入'} · ${formatScore(basePayment)}`,
+      'ron',
     );
     return game;
   }
@@ -327,6 +337,7 @@ export function applyGameAction(
       game,
       before,
       `${winner.name} 自摸 · ${manual ? '手动输入' : points.limit || `${points.fu}符${points.han}番`} · ${share}`,
+      'tsumo',
     );
     return game;
   }
@@ -345,6 +356,7 @@ export function applyGameAction(
       game,
       before,
       ready.length ? `流局 · ${ready.length}家听牌` : '流局 · 全员未听',
+      'draw',
     );
     return game;
   }
@@ -358,6 +370,7 @@ export function applyGameAction(
       game,
       before,
       `${target.name} 修正 ${action.points > 0 ? '+' : ''}${formatScore(action.points)}`,
+      'adjust',
     );
     return game;
   }
@@ -380,6 +393,6 @@ export function applyGameAction(
       : action.ruling === 'false-call'
         ? '误喊未摊 · 本局禁和'
         : '诈立 · −20 pt并退棒';
-  commit(game, before, `${target.name} ${label}`);
+  commit(game, before, `${target.name} ${label}`, 'ruling');
   return game;
 }
