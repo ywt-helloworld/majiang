@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   Copy,
@@ -48,6 +49,13 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+  LobbyDecoration,
+  MahjongTile,
+  RankBadge,
+  SakuraBranch,
+  SakuraFlower,
+} from '@/components/theme-art';
 import {
   NativeSelect,
   NativeSelectOption,
@@ -229,8 +237,9 @@ function toShanghaiDateInput(timestamp: number | null) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="min-h-dvh bg-background text-foreground">
-      <div className="mx-auto min-h-dvh w-full max-w-[560px] px-4 pb-[calc(88px+env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))]">
+    <main className="theme-shell min-h-dvh text-foreground">
+      <div className="theme-frame mx-auto min-h-dvh w-full max-w-[560px] px-4 pb-[calc(100px+env(safe-area-inset-bottom))] pt-[max(20px,env(safe-area-inset-top))]">
+        <SakuraBranch className="shell-branch" />
         {children}
       </div>
     </main>
@@ -239,10 +248,10 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Brand() {
   return (
-    <div className="flex items-center gap-3.5">
-      <span className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-[20px] border border-primary/10 bg-[#eef5cc] shadow-[0_8px_24px_rgb(24_91_67/14%)]">
+    <div className="brand flex items-center gap-2.5">
+      <span className="brand-avatar grid size-12 shrink-0 place-items-center overflow-hidden rounded-full border border-primary/10">
         <Image
-          src="/ichihime.png"
+          src="/theme/ichihime-avatar.webp"
           alt="雀魂角色一姬"
           width={56}
           height={56}
@@ -250,7 +259,7 @@ function Brand() {
           className="size-full object-contain"
         />
       </span>
-      <p className="text-2xl font-semibold tracking-tight">绝好调</p>
+      <p className="brand-name text-[23px] font-bold tracking-tight">绝好调</p>
     </div>
   );
 }
@@ -284,9 +293,14 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   }
   return (
     <Shell>
-      <div className="flex min-h-[calc(100dvh-52px)] flex-col">
+      <div className="login-page flex min-h-[calc(100dvh-52px)] flex-col">
         <Brand />
-        <section className="my-auto py-12">
+        <section className="login-card my-auto py-8">
+          <div
+            className="login-illustration"
+            role="img"
+            aria-label="樱花下的一姬"
+          />
           <p className="text-xs font-semibold tracking-[0.16em] text-primary">
             WELCOME
           </p>
@@ -491,7 +505,7 @@ function AppHeader({
   onRenamed: (user: User) => void;
 }) {
   return (
-    <header className="mb-6 flex items-center justify-between">
+    <header className="app-header mb-6 flex items-center justify-between gap-2">
       <Brand />
       <div className="flex items-center gap-0.5">
         {user.isAdmin ? (
@@ -519,7 +533,10 @@ function AppHeader({
 
 function Notice({ text }: { text: string }) {
   return (
-    <div className="mb-4 flex items-start gap-2 rounded-2xl bg-destructive/10 px-3 py-2.5 text-xs leading-5 text-destructive">
+    <div
+      role="alert"
+      className="notice mb-4 flex items-start gap-2 rounded-2xl bg-destructive/10 px-3 py-2.5 text-xs leading-5 text-destructive"
+    >
       <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
       {text}
     </div>
@@ -535,17 +552,23 @@ function Lobby({
 }) {
   const [code, setCode] = useState('');
   return (
-    <section>
-      <div className="rounded-[28px] bg-primary p-6 text-primary-foreground shadow-[0_18px_45px_rgb(24_91_67/18%)]">
-        <p className="text-xs font-medium opacity-70">新的一桌</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-          四人准备，一起记分
-        </h1>
-        <p className="mt-2 text-sm leading-6 opacity-75">
-          房间内任何玩家都能登记每局结果，所有人的分数会同步更新。
-        </p>
+    <section className="lobby-view page-enter">
+      <div className="lobby-hero">
+        <div className="hero-copy">
+          <p className="hero-kicker">
+            新的一桌 <SakuraFlower className="size-3.5" />
+          </p>
+          <h1>
+            四人准备，
+            <br />
+            一起记分
+          </h1>
+          <p className="hero-description">
+            房间内任何玩家都能登记每局结果，所有人的分数会同步更新。
+          </p>
+        </div>
         <Button
-          className="mt-6 h-11 w-full rounded-2xl bg-white text-primary hover:bg-white/90"
+          className="hero-create h-12 w-full rounded-full text-base font-semibold"
           onClick={() => act({ action: 'create' })}
           disabled={busy}
         >
@@ -553,32 +576,38 @@ function Lobby({
           创建房间
         </Button>
       </div>
-      <div className="mt-4 rounded-3xl border bg-card p-5">
-        <p className="text-sm font-semibold">已有房间码</p>
-        <div className="mt-3 flex gap-2">
-          <Input
-            value={code}
-            maxLength={6}
-            onChange={(event) =>
-              setCode(
-                event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''),
-              )
-            }
-            placeholder="输入 6 位房间码"
-            className="h-11 rounded-xl uppercase tracking-[0.16em]"
-          />
-          <Button
-            className="h-11 rounded-xl px-4"
-            disabled={code.length !== 6 || busy}
-            onClick={() => act({ action: 'join', code })}
-          >
-            加入
-          </Button>
+      <div className="join-card mt-3 rounded-3xl border bg-card p-4">
+        <MahjongTile character="東" className="join-tile" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">已有房间码</p>
+          <div className="mt-3 flex gap-2">
+            <Input
+              value={code}
+              maxLength={6}
+              onChange={(event) =>
+                setCode(
+                  event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''),
+                )
+              }
+              placeholder="输入 6 位房间码"
+              aria-label="6 位房间码"
+              className="h-11 min-w-0 rounded-2xl uppercase tracking-[0.12em]"
+            />
+            <Button
+              className="h-11 rounded-2xl px-4"
+              disabled={code.length !== 6 || busy}
+              onClick={() => act({ action: 'join', code })}
+            >
+              加入
+            </Button>
+          </div>
         </div>
       </div>
-      <details className="mt-4 rounded-3xl border bg-card p-5 text-sm">
-        <summary className="cursor-pointer font-semibold">
-          本赛事计分规则
+      <details className="rules-card mt-3 rounded-3xl border bg-card p-4 text-sm">
+        <summary className="flex cursor-pointer items-center gap-3 font-semibold">
+          <MahjongTile character="雀" className="rules-tile" />
+          <span className="flex-1">本赛事计分规则</span>
+          <ChevronDown className="rules-chevron size-4 text-muted-foreground" />
         </summary>
         <div className="mt-3 space-y-2 text-xs leading-5 text-muted-foreground">
           <p>
@@ -595,6 +624,7 @@ function Lobby({
           </p>
         </div>
       </details>
+      <LobbyDecoration />
     </section>
   );
 }
@@ -1513,9 +1543,7 @@ function FinishedRoom({
             key={result.userId}
             className="flex items-center rounded-2xl border bg-card p-4"
           >
-            <span className="w-10 text-lg font-semibold text-primary">
-              {result.place}
-            </span>
+            <RankBadge rank={result.place} podium />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">
                 {result.name}
@@ -1527,7 +1555,7 @@ function FinishedRoom({
               </p>
             </div>
             <p
-              className={`font-mono text-lg font-semibold ${result.totalPoints >= 0 ? 'text-primary' : 'text-destructive'}`}
+              className={`font-mono text-lg font-semibold ${result.totalPoints >= 0 ? 'text-success' : 'text-destructive'}`}
             >
               {signed(result.totalPoints)}
             </p>
@@ -1588,25 +1616,26 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
           <button
             type="button"
             aria-label={`查看房间 ${row.roomCode} 的牌局详情`}
-            className="flex w-full items-center rounded-2xl border bg-card p-4 text-left transition active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            className="history-card flex w-full items-center rounded-3xl border bg-card p-4 text-left transition active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           />
         }
       >
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-sm font-semibold">
-          {row.rank}
-        </span>
+        <RankBadge rank={row.rank} />
         <span className="ml-3 min-w-0 flex-1">
           <span className="block text-sm font-semibold">
             房间 {row.roomCode}
           </span>
-          <span className="mt-1 block text-xs text-muted-foreground">
-            {new Date(row.createdAt).toLocaleDateString('zh-CN')} ·{' '}
-            {row.seasonLabel} · {formatScore(row.finalScore)} 点
+          <span className="history-meta mt-1 block text-xs text-muted-foreground">
+            <span>{new Date(row.createdAt).toLocaleDateString('zh-CN')}</span>
+            <span>{row.seasonLabel}</span>
+            <span className="history-points">
+              {formatScore(row.finalScore)} 点
+            </span>
           </span>
         </span>
         <span className="ml-2 text-right">
           <span
-            className={`block font-mono font-semibold ${row.totalPt >= 0 ? 'text-primary' : 'text-destructive'}`}
+            className={`score-value block font-mono font-semibold ${row.totalPt >= 0 ? 'text-success' : 'text-destructive'}`}
           >
             {signed(row.totalPt)}
           </span>
@@ -1674,7 +1703,7 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
                         </p>
                       </div>
                       <p
-                        className={`font-mono text-sm font-semibold ${result.totalPt >= 0 ? 'text-primary' : 'text-destructive'}`}
+                        className={`font-mono text-sm font-semibold ${result.totalPt >= 0 ? 'text-success' : 'text-destructive'}`}
                       >
                         {signed(result.totalPt)} pt
                       </p>
@@ -1750,7 +1779,7 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
                                     <span
                                       className={
                                         delta > 0
-                                          ? 'text-primary'
+                                          ? 'text-success'
                                           : 'text-destructive'
                                       }
                                     >
@@ -1786,13 +1815,16 @@ function MatchDetailSheet({ row }: { row: HistoryRow }) {
 
 function HistoryView({ rows }: { rows: HistoryRow[] }) {
   return (
-    <section>
-      <h1 className="text-2xl font-semibold">历史战绩</h1>
+    <section className="history-view page-enter">
+      <div className="page-heading">
+        <h1 className="text-2xl font-bold">历史战绩</h1>
+        <SakuraFlower className="size-5" />
+      </div>
       <p className="mt-1 text-xs text-muted-foreground">
         点击牌局可查看和牌、流局、立直与点数变化
       </p>
       {rows.length ? (
-        <div className="mt-5 space-y-2">
+        <div className="history-list mt-5 space-y-2.5">
           {rows.map((row) => (
             <MatchDetailSheet key={row.matchId} row={row} />
           ))}
@@ -1816,6 +1848,7 @@ function RankingView({
   seasonId,
   loading,
   onSeasonChange,
+  currentUserId,
 }: {
   rows: LeaderboardRow[];
   yakumanRows: YakumanLeaderboardRow[];
@@ -1824,6 +1857,7 @@ function RankingView({
   seasonId: string;
   loading: boolean;
   onSeasonChange: (seasonId: string) => Promise<void>;
+  currentUserId: string;
 }) {
   const [mode, setMode] = useState<RankingMode>('total');
   const [rankingNow] = useState(() => Date.now());
@@ -1859,10 +1893,13 @@ function RankingView({
           ? '按平均顺位从低到高排名'
           : '记录每位玩家和到的役满';
   return (
-    <section>
-      <h1 className="text-2xl font-semibold">战绩排行</h1>
+    <section className="ranking-view page-enter">
+      <div className="page-heading">
+        <h1 className="text-2xl font-bold">战绩排行</h1>
+        <SakuraFlower className="size-5" />
+      </div>
       <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-      <div className="mt-4 rounded-2xl bg-primary/10 p-4 text-primary">
+      <div className="season-card mt-4 rounded-3xl border p-4 text-primary">
         <div className="flex items-center gap-2">
           <CalendarDays className="size-4 shrink-0" />
           <p className="min-w-0 flex-1 truncate text-sm font-semibold">
@@ -1877,29 +1914,33 @@ function RankingView({
               : '全部历史牌局'}
             {daysRemaining !== null && ` · 还剩 ${daysRemaining} 天`}
           </p>
-          <NativeSelect className="w-36 shrink-0" size="sm">
-            <select
-              aria-label="选择排行榜赛季"
-              value={seasonId}
-              disabled={loading}
-              onChange={(event) => void onSeasonChange(event.target.value)}
-            >
-              <NativeSelectOption value={currentSeason.id}>
-                当前赛季
-              </NativeSelectOption>
-              <NativeSelectOption value="all">全部赛季</NativeSelectOption>
-              {seasons
-                .filter((season) => season.id !== currentSeason.id)
-                .map((season) => (
-                  <NativeSelectOption key={season.id} value={season.id}>
-                    {season.label}
-                  </NativeSelectOption>
-                ))}
-            </select>
+          <NativeSelect
+            className="w-36 shrink-0"
+            size="sm"
+            aria-label="选择排行榜赛季"
+            value={seasonId}
+            disabled={loading}
+            onChange={(event) => void onSeasonChange(event.target.value)}
+          >
+            <NativeSelectOption value={currentSeason.id}>
+              当前赛季
+            </NativeSelectOption>
+            <NativeSelectOption value="all">全部赛季</NativeSelectOption>
+            {seasons
+              .filter((season) => season.id !== currentSeason.id)
+              .map((season) => (
+                <NativeSelectOption key={season.id} value={season.id}>
+                  {season.label}
+                </NativeSelectOption>
+              ))}
           </NativeSelect>
         </div>
       </div>
-      <div className="mt-4 grid grid-cols-4 rounded-xl bg-muted p-1">
+      <div
+        className="ranking-tabs mt-3 grid grid-cols-4 rounded-full border bg-muted p-1"
+        role="group"
+        aria-label="排行方式"
+      >
         {(
           [
             ['total', '累计 pt'],
@@ -1911,24 +1952,21 @@ function RankingView({
           <button
             key={value}
             onClick={() => setMode(value)}
-            className={`h-9 rounded-lg text-xs font-medium transition ${mode === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+            aria-pressed={mode === value}
+            className={`h-9 rounded-full text-xs font-medium transition ${mode === value ? 'ranking-tab-active bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground'}`}
           >
             {label}
           </button>
         ))}
       </div>
       {mode === 'yakuman' && yakumanRows.length ? (
-        <div className="mt-5 overflow-hidden rounded-3xl border bg-card">
+        <div className="leaderboard mt-4 overflow-hidden rounded-3xl border bg-card">
           {yakumanRows.map((row, index) => (
             <div
               key={row.id}
-              className="flex items-start border-b p-4 last:border-0"
+              className={`leaderboard-row flex items-start border-b p-4 last:border-0 ${row.id === currentUserId ? 'is-current-user' : ''}`}
             >
-              <span
-                className={`grid size-9 shrink-0 place-items-center rounded-xl text-sm font-semibold ${index < 3 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
-              >
-                {index + 1}
-              </span>
+              <RankBadge rank={index + 1} podium />
               <div className="ml-3 min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold">{row.username}</p>
                 <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
@@ -1947,19 +1985,15 @@ function RankingView({
           ))}
         </div>
       ) : mode !== 'yakuman' && rows.length ? (
-        <div className="mt-5 overflow-hidden rounded-3xl border bg-card">
+        <div className="leaderboard mt-4 overflow-hidden rounded-3xl border bg-card">
           {sorted.map((row, index) => {
             const metric = mode === 'average' ? row.avgPt : row.totalPt;
             return (
               <div
                 key={row.id}
-                className="flex items-center border-b p-4 last:border-0"
+                className={`leaderboard-row flex items-center border-b p-4 last:border-0 ${row.id === currentUserId ? 'is-current-user' : ''}`}
               >
-                <span
-                  className={`grid size-9 place-items-center rounded-xl text-sm font-semibold ${index < 3 ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}
-                >
-                  {index + 1}
-                </span>
+                <RankBadge rank={index + 1} podium />
                 <div className="ml-3 min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold">
                     {row.username}
@@ -1973,7 +2007,7 @@ function RankingView({
                   </p>
                 </div>
                 <p
-                  className={`font-mono font-semibold ${mode === 'place' ? 'text-primary' : metric >= 0 ? 'text-primary' : 'text-destructive'}`}
+                  className={`score-value ml-2 shrink-0 font-mono font-semibold ${mode === 'place' ? 'text-primary' : metric >= 0 ? 'text-success' : 'text-destructive'}`}
                 >
                   {mode === 'place' ? row.avgRank.toFixed(2) : signed(metric)}
                 </p>
@@ -2268,7 +2302,7 @@ function DirectResultForm({
                 {standing.place} 位 · {standing.name}
               </span>
               <span
-                className={`font-mono font-semibold ${standing.totalPoints >= 0 ? 'text-primary' : 'text-destructive'}`}
+                className={`font-mono font-semibold ${standing.totalPoints >= 0 ? 'text-success' : 'text-destructive'}`}
               >
                 {signed(standing.totalPoints)} pt
               </span>
@@ -2678,18 +2712,23 @@ function BottomNav({
   ];
   if (isAdmin) items.push({ value: 'admin', label: '管理', icon: ShieldCheck });
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+    <nav
+      aria-label="主导航"
+      className="bottom-nav fixed inset-x-0 bottom-0 z-20 pb-[env(safe-area-inset-bottom)]"
+    >
       <div
-        className={`mx-auto grid h-16 max-w-[560px] px-4 ${isAdmin ? 'grid-cols-4' : 'grid-cols-3'}`}
+        className={`bottom-nav-inner mx-auto grid h-[76px] max-w-[560px] px-3 ${isAdmin ? 'grid-cols-4' : 'grid-cols-3'}`}
       >
         {items.map((item) => (
           <button
             key={item.value}
             disabled={disabled && item.value !== 'match'}
+            aria-current={tab === item.value ? 'page' : undefined}
             onClick={() => setTab(item.value)}
-            className={`flex flex-col items-center justify-center gap-1 text-[10px] transition disabled:opacity-30 ${tab === item.value ? 'text-primary' : 'text-muted-foreground'}`}
+            className={`nav-item flex flex-col items-center justify-center gap-1 text-[11px] transition disabled:opacity-30 ${tab === item.value ? 'is-active text-primary' : 'text-muted-foreground'}`}
           >
             <item.icon className="size-5" />
+            {tab === item.value && <SakuraFlower className="nav-flower" />}
             {item.label}
           </button>
         ))}
@@ -2865,6 +2904,7 @@ export default function Home() {
           seasonId={rankingSeasonId}
           loading={rankingLoading}
           onSeasonChange={changeRankingSeason}
+          currentUserId={user.id}
         />
       )}
       {tab === 'admin' && user.isAdmin && <AdminView />}
