@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -14,6 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: '绝好调｜日本麻将房间记分工具',
+  icons: { icon: '/favicon.svg' },
   description:
     '免密用户名登录，创建四人房间并在线记录日本立直麻将每局分数、个人战绩与排行榜。',
   openGraph: {
@@ -27,6 +28,13 @@ export const metadata: Metadata = {
     description: '手机端日本立直麻将计分与赛事 pt 结算工具',
     images: ['/og.png'],
   },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#fff5f8',
 };
 
 export default function RootLayout({
